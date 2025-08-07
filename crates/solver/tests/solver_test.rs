@@ -2,8 +2,16 @@
 mod tests {
     use approx::assert_relative_eq;
     use nalgebra::Vector2;
-    use solver::{fit_affine_from_pairs, fit_similarity_from_pairs, ransac_fit_similarity, Transform};
-    use types::{Affine, Similarity};
+use solver::{
+    affine_to_proj,
+    compose_similarity,
+    fit_affine_from_pairs,
+    fit_similarity_from_pairs,
+    invert_similarity,
+    ransac_fit_similarity,
+    Transform,
+};
+use types::{Affine, Similarity};
 
     #[test]
     fn test_similarity_apply() {
@@ -53,5 +61,26 @@ mod tests {
         assert_relative_eq!(t.params[1], true_t.params[1], epsilon = 1e-2);
         assert_relative_eq!(t.params[2], true_t.params[2], epsilon = 1e-2);
         assert_relative_eq!(t.params[3], true_t.params[3], epsilon = 1e-2);
+    }
+
+    #[test]
+    fn test_similarity_invert_compose() {
+        let t = Similarity { params: [1.2, 0.3, 4.0, -2.0] };
+        let inv = invert_similarity(&t);
+        let composed = compose_similarity(&t, &inv);
+        // composed should be close to identity
+        let p = Vector2::new(2.0, -1.0);
+        let q = composed.apply(&p);
+        assert_relative_eq!(q.x, p.x, epsilon = 1e-6);
+        assert_relative_eq!(q.y, p.y, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn test_affine_to_proj() {
+        let aff = Affine { params: [1.0, 0.0, 0.0, 1.0, 5.0, -2.0] };
+        let proj = affine_to_proj(&aff);
+        assert!(proj.contains("+proj=pipeline"));
+        assert!(proj.contains("+xoff=5"));
+        assert!(proj.contains("+yoff=-2"));
     }
 }
