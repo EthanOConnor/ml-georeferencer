@@ -14,11 +14,17 @@ setup:
 	pre-commit install || true
 	@echo "Bootstrap complete."
 
+build:
+	cargo build --all-targets
+
+test:
+	cargo test --all-targets
+
 fmt:
 	cargo fmt --all
 
 clippy:
-	cargo clippy --all-targets -- -D warnings || true
+	cargo clippy --all-targets -- -D warnings
 
 lint: fmt clippy md-lint
 
