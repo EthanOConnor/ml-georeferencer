@@ -1,2 +1,5 @@
 /target
 .DS_Store
+apps/desktop/node_modules/
+apps/desktop/dist/
+**/.pnpm-workspace-state-v1.json
