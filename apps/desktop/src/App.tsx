@@ -11,6 +11,8 @@ function App() {
   const [constraints, setConstraints] = useState<{ id: number; src: [number, number]; dst: [number, number]; weight: number }[]>([]);
   const [pendingSrc, setPendingSrc] = useState<[number, number] | null>(null);
   const [solution, setSolution] = useState<{ method: 'similarity' | 'affine'; t: OverlayTransform; rmse: number; p90: number } | null>(null);
+  const [residuals, setResiduals] = useState<{ id: number; r: number }[]>([]);
+  const [globalOnly, setGlobalOnly] = useState(true);
 
   async function pickMap() {
     const path = await open({ multiple: false, filters: [{ name: 'TIFF', extensions: ['tif', 'tiff'] }] });
@@ -39,13 +41,17 @@ function App() {
   }
 
   async function solve(method: 'similarity' | 'affine') {
-    const [stack, metrics] = (await invoke('solve_global', { method })) as [any, { rmse: number; p90_error: number }];
+    const [stack, metrics] = (await invoke('solve_global', { method })) as [
+      any,
+      { rmse: number; p90_error: number; residuals_by_id: [number, number][] }
+    ];
     const top = stack.transforms?.[0];
     if (top?.Similarity && method === 'similarity') {
       setSolution({ method, t: { kind: 'similarity', params: top.Similarity.params }, rmse: metrics.rmse, p90: metrics.p90_error });
     } else if (top?.Affine && method === 'affine') {
       setSolution({ method, t: { kind: 'affine', params: top.Affine.params }, rmse: metrics.rmse, p90: metrics.p90_error });
     }
+    setResiduals(metrics.residuals_by_id.map(([id, r]) => ({ id, r })));
   }
 
   async function exportWorld() {
@@ -53,6 +59,13 @@ function App() {
     const base = mapPath.replace(/\.[^.]+$/, '');
     await invoke('export_world_file', { pathWithoutExt: base, method: solution.method });
     alert('World file written next to map');
+  }
+
+  async function copyProj() {
+    if (!solution) return;
+    const proj: string = await invoke('get_proj_string', { method: solution.method });
+    await navigator.clipboard.writeText(proj);
+    alert('PROJ string copied to clipboard');
   }
 
   return (
@@ -95,6 +108,12 @@ function App() {
           <button onClick={() => solve('similarity')} disabled={constraints.length < 2}>Solve Similarity</button>
           <button onClick={() => solve('affine')} disabled={constraints.length < 3}>Solve Affine</button>
           <button onClick={exportWorld} disabled={!solution}>Export World File</button>
+          <button onClick={copyProj} disabled={!solution}>Copy PROJ</button>
+        </div>
+        <div style={{ marginBottom: 8 }}>
+          <label>
+            <input type="checkbox" checked={globalOnly} onChange={(e) => setGlobalOnly(e.target.checked)} /> Global only
+          </label>
         </div>
         <div style={{ marginBottom: 8 }}>
           <strong>Status: </strong>
@@ -105,6 +124,16 @@ function App() {
         {solution && (
           <div style={{ marginBottom: 8 }}>
             <strong>Solution:</strong> {solution.method} | RMSE {solution.rmse.toFixed(3)} | P90 {solution.p90.toFixed(3)}
+          </div>
+        )}
+        {residuals.length > 0 && (
+          <div style={{ marginBottom: 8 }}>
+            <h3>Residuals</h3>
+            <table><tbody>
+              {residuals.map((r) => (
+                <tr key={r.id}><td>{r.id}</td><td>{r.r.toFixed(2)}</td></tr>
+              ))}
+            </tbody></table>
           </div>
         )}
         <h3>Pairs ({constraints.length})</h3>

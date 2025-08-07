@@ -160,6 +160,23 @@ fn residuals_by_id_affine(t: &types::Affine, constraints: &[ConstraintKind]) -> 
 }
 
 #[tauri::command]
+fn get_proj_string(method: String, state: State<AppState>) -> Result<String, String> {
+    let list = state.constraints.lock().map_err(|e| e.to_string())?;
+    let pairs = solver::pairs_from_constraints(&list);
+    match method.as_str() {
+        "similarity" => {
+            let t = solver::fit_similarity_from_pairs(&pairs).map_err(|e| e.to_string())?;
+            Ok(solver::similarity_to_proj(&t))
+        }
+        "affine" => {
+            let t = solver::fit_affine_from_pairs(&pairs).map_err(|e| e.to_string())?;
+            Ok(solver::affine_to_proj(&t))
+        }
+        _ => Err(format!("unknown method {}", method)),
+    }
+}
+
+#[tauri::command]
 fn export_world_file(path_without_ext: String, method: String, state: State<AppState>) -> Result<(), String> {
     let list = state.constraints.lock().map_err(|e| e.to_string())?;
     let pairs = solver::pairs_from_constraints(&list);
@@ -238,6 +255,7 @@ fn main() {
             add_constraint,
             delete_constraint,
             solve_global,
+            get_proj_string,
             export_world_file,
         ])
         .run(tauri::generate_context!())
