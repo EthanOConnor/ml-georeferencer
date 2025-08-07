@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Constraints",
+  "type": "object",
+  "properties": {
+    "points": {
+      "type": "array"
+    },
+    "lines": {
+      "type": "array"
+    },
+    "areas": {
+      "type": "array"
+    },
+    "anchors": {
+      "type": "array"
+    }
+  }
+}

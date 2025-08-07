@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TransformStack",
+  "type": "object",
+  "properties": {
+    "global": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "similarity",
+            "affine",
+            "homography"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "local": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "tps",
+            "ffd",
+            "pwa"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "quality": {
+      "type": "object",
+      "properties": {
+        "rmse_px": {
+          "type": "number"
+        },
+        "rmse_m": {
+          "type": "number"
+        },
+        "n_gcps": {
+          "type": "integer"
+        },
+        "max_resid_m": {
+          "type": "number"
+        }
+      }
+    }
+  },
+  "required": [
+    "global"
+  ]
+}
