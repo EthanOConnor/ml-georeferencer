@@ -1,37 +1,160 @@
-use types::{Affine, Similarity, ConstraintKind};
-
-// Type-safe parameters
-#[derive(Debug, Clone, Copy)]
-pub struct Radians(pub f64);
-#[derive(Debug, Clone, Copy)]
-pub struct Scale(pub f64);
+use anyhow::{anyhow, Result};
+use nalgebra::{Matrix2, SVD, Vector2};
+use rand::seq::SliceRandom;
+use types::{Affine, ConstraintKind, Similarity};
 
 pub trait Transform {
-    fn apply(&self, point: &[f64; 2]) -> [f64; 2];
-    fn invert(&self) -> Self;
-    fn compose(&self, other: &Self) -> Self;
+    fn apply(&self, point: &Vector2<f64>) -> Vector2<f64>;
 }
 
 impl Transform for Similarity {
-    // ... implementation ...
+    fn apply(&self, point: &Vector2<f64>) -> Vector2<f64> {
+        let s = self.params[0];
+        let theta = self.params[1];
+        let tx = self.params[2];
+        let ty = self.params[3];
+        let rotation = Matrix2::new(theta.cos(), -theta.sin(), theta.sin(), theta.cos());
+        s * rotation * point + Vector2::new(tx, ty)
+    }
 }
 
 impl Transform for Affine {
-    // ... implementation ...
+    fn apply(&self, point: &Vector2<f64>) -> Vector2<f64> {
+        let a = self.params[0];
+        let b = self.params[1];
+        let c = self.params[2];
+        let d = self.params[3];
+        let tx = self.params[4];
+        let ty = self.params[5];
+        let linear_map = Matrix2::new(a, b, c, d);
+        linear_map * point + Vector2::new(tx, ty)
+    }
 }
 
-// Full API signatures for fitting functions
-pub fn fit_from_point_pairs(points: &[(f64, f64)]) -> Result<Similarity, &'static str> {
-    // ... implementation ...
-    Err("Not implemented")
+pub fn fit_similarity_from_pairs(pairs: &[([f64; 2], [f64; 2])]) -> Result<Similarity> {
+    let n = pairs.len();
+    if n < 2 {
+        return Err(anyhow!("At least 2 pairs are required (got {})", n));
+    }
+
+    let (src_points, dst_points): (Vec<_>, Vec<_>) = pairs
+        .iter()
+        .map(|(s, d)| (Vector2::from(*s), Vector2::from(*d)))
+        .unzip();
+    let src_centroid: Vector2<f64> = src_points.iter().sum::<Vector2<f64>>() / (n as f64);
+    let dst_centroid: Vector2<f64> = dst_points.iter().sum::<Vector2<f64>>() / (n as f64);
+
+    let centered_src: Vec<_> = src_points.iter().map(|p| p - src_centroid).collect();
+    let centered_dst: Vec<_> = dst_points.iter().map(|p| p - dst_centroid).collect();
+
+    let sum_centered_src_sq_norm: f64 = centered_src.iter().map(|p| p.norm_squared()).sum();
+    if !sum_centered_src_sq_norm.is_finite() || sum_centered_src_sq_norm <= f64::EPSILON {
+        return Err(anyhow!("Insufficient variance in source points"));
+    }
+
+    let mut c = Matrix2::zeros();
+    for i in 0..n {
+        c += centered_dst[i] * centered_src[i].transpose();
+    }
+
+    let svd = SVD::new(c, true, true);
+    let u = svd.u.ok_or_else(|| anyhow!("SVD U matrix not found"))?;
+    let v_t = svd.v_t.ok_or_else(|| anyhow!("SVD V_t matrix not found"))?;
+
+    let mut r = u * v_t;
+    if r.determinant() < 0.0 {
+        let mut u_clone = u.clone_owned();
+        u_clone.column_mut(1).scale_mut(-1.0);
+        r = u_clone * v_t;
+    }
+
+    let s = (c.transpose() * r).trace() / sum_centered_src_sq_norm;
+    let t = dst_centroid - s * r * src_centroid;
+    let theta = r.m21.atan2(r.m11);
+    Ok(Similarity { params: [s, theta, t[0], t[1]] })
 }
 
-pub fn ransac_fit(points: &[(f64, f64)], threshold: f64, max_iterations: usize) -> Result<Similarity, &'static str> {
-    // ... implementation ...
-    Err("Not implemented")
+pub fn fit_affine_from_pairs(pairs: &[([f64; 2], [f64; 2])]) -> Result<Affine> {
+    let n = pairs.len();
+    if n < 3 {
+        return Err(anyhow!("At least 3 pairs are required to fit an affine transform."));
+    }
+    let mut a = nalgebra::DMatrix::<f64>::zeros(2 * n, 6);
+    let mut b = nalgebra::DVector::<f64>::zeros(2 * n);
+    for i in 0..n {
+        let src = pairs[i].0;
+        let dst = pairs[i].1;
+        a[(2 * i, 0)] = src[0];
+        a[(2 * i, 1)] = src[1];
+        a[(2 * i, 4)] = 1.0;
+        a[(2 * i + 1, 2)] = src[0];
+        a[(2 * i + 1, 3)] = src[1];
+        a[(2 * i + 1, 5)] = 1.0;
+        b[2 * i] = dst[0];
+        b[2 * i + 1] = dst[1];
+    }
+    let decomp = a.svd(true, true);
+    let x = decomp.solve(&b, 1e-6).map_err(|e| anyhow!(e.to_string()))?;
+    Ok(Affine { params: [x[0], x[1], x[2], x[3], x[4], x[5]] })
 }
 
-pub fn refine_solution(transform: &Similarity, constraints: &[ConstraintKind]) -> Result<Similarity, &'static str> {
-    // ... implementation ...
-    Err("Not implemented")
+pub fn ransac_fit_similarity(
+    pairs: &[([f64; 2], [f64; 2])],
+    threshold_px: f64,
+    max_iters: usize,
+) -> Result<Similarity> {
+    if pairs.len() < 2 {
+        return Err(anyhow!("RANSAC needs ≥2 pairs; got {}", pairs.len()));
+    }
+    if !threshold_px.is_finite() || threshold_px <= 0.0 {
+        return Err(anyhow!("RANSAC threshold must be positive and finite"));
+    }
+    let mut best_inliers = 0usize;
+    let mut best_transform = Similarity { params: [1.0, 0.0, 0.0, 0.0] };
+    for _ in 0..max_iters {
+        let sample: Vec<_> = pairs
+            .choose_multiple(&mut rand::thread_rng(), 2)
+            .cloned()
+            .collect();
+        if sample.len() < 2 { continue; }
+        if let Ok(transform) = fit_similarity_from_pairs(&sample) {
+            let mut inliers = 0;
+            for (src, dst) in pairs {
+                let src_vec = Vector2::from(*src);
+                let dst_vec = Vector2::from(*dst);
+                let predicted_dst = transform.apply(&src_vec);
+                if (predicted_dst - dst_vec).norm() < threshold_px {
+                    inliers += 1;
+                }
+            }
+            if inliers > best_inliers {
+                best_inliers = inliers;
+                let all_inliers: Vec<_> = pairs
+                    .iter()
+                    .filter(|(src, dst)| {
+                        let src_vec = Vector2::from(*src);
+                        let dst_vec = Vector2::from(*dst);
+                        let predicted_dst = transform.apply(&src_vec);
+                        (predicted_dst - dst_vec).norm() < threshold_px
+                    })
+                    .cloned()
+                    .collect();
+                if let Ok(refit_transform) = fit_similarity_from_pairs(&all_inliers) {
+                    best_transform = refit_transform;
+                }
+            }
+        }
+    }
+    if best_inliers == 0 { return Err(anyhow!("RANSAC failed to find a model")); }
+    Ok(best_transform)
+}
+
+pub fn pairs_from_constraints(constraints: &[ConstraintKind]) -> Vec<([f64; 2], [f64; 2])> {
+    constraints
+        .iter()
+        .filter_map(|c| match c {
+            ConstraintKind::PointPair { src, dst, .. } => Some((*src, *dst)),
+            _ => None,
+        })
+        .collect()
 }

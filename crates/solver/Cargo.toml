@@ -9,6 +9,8 @@ license.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 types = { path = "../types" }
+nalgebra = "0.32"
+rand = "0.8"
 
 [dev-dependencies]
 approx.workspace = true
