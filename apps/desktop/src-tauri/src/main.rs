@@ -61,21 +61,27 @@ fn solve_global(method: String, state: State<AppState>) -> Result<(TransformStac
     if pairs.len() < 3 && method == "affine" {
         return Err(format!("need ≥3 pairs; got {}", pairs.len()));
     }
+    let mut warnings = Vec::new();
+    if variance_low(&pairs) {
+        warnings.push("Low variance in source points; results may be unstable".to_string());
+    }
     match method.as_str() {
         "similarity" => {
             let t = solver::fit_similarity_from_pairs(&pairs).map_err(|e| e.to_string())?;
             let (rmse, p90, residuals) = metrics_similarity(&t, &pairs);
+            let residuals_by_id = residuals_by_id_similarity(&t, &list);
             Ok((
                 TransformStack { transforms: vec![TransformKind::Similarity(t)] },
-                QualityMetrics { rmse, p90_error: p90, residuals },
+                QualityMetrics { rmse, p90_error: p90, residuals, residuals_by_id, warnings },
             ))
         }
         "affine" => {
             let t = solver::fit_affine_from_pairs(&pairs).map_err(|e| e.to_string())?;
             let (rmse, p90, residuals) = metrics_affine(&t, &pairs);
+            let residuals_by_id = residuals_by_id_affine(&t, &list);
             Ok((
                 TransformStack { transforms: vec![TransformKind::Affine(t)] },
-                QualityMetrics { rmse, p90_error: p90, residuals },
+                QualityMetrics { rmse, p90_error: p90, residuals, residuals_by_id, warnings },
             ))
         }
         _ => Err(format!("unknown method {}", method)),
@@ -120,6 +126,39 @@ fn summarize_residuals(mut residuals: Vec<f64>) -> (f64, f64, Vec<f64>) {
     (rmse, p90, residuals)
 }
 
+fn variance_low(pairs: &[([f64; 2], [f64; 2])]) -> bool {
+    if pairs.is_empty() { return true; }
+    let n = pairs.len() as f64;
+    let mean_x = pairs.iter().map(|(s, _)| s[0]).sum::<f64>()/n;
+    let mean_y = pairs.iter().map(|(s, _)| s[1]).sum::<f64>()/n;
+    let var = pairs.iter().map(|(s, _)| (s[0]-mean_x).powi(2) + (s[1]-mean_y).powi(2)).sum::<f64>()/n;
+    var < 1e-6
+}
+
+fn residuals_by_id_similarity(t: &types::Similarity, constraints: &[ConstraintKind]) -> Vec<(u64, f64)> {
+    constraints.iter().filter_map(|c| match c {
+        ConstraintKind::PointPair { id, src, dst, .. } => {
+            let s = nalgebra::Vector2::from(*src);
+            let d = nalgebra::Vector2::from(*dst);
+            let pred = solver::Transform::apply(t, &s);
+            Some((*id, (pred - d).norm()))
+        }
+        _ => None,
+    }).collect()
+}
+
+fn residuals_by_id_affine(t: &types::Affine, constraints: &[ConstraintKind]) -> Vec<(u64, f64)> {
+    constraints.iter().filter_map(|c| match c {
+        ConstraintKind::PointPair { id, src, dst, .. } => {
+            let s = nalgebra::Vector2::from(*src);
+            let d = nalgebra::Vector2::from(*dst);
+            let pred = solver::Transform::apply(t, &s);
+            Some((*id, (pred - d).norm()))
+        }
+        _ => None,
+    }).collect()
+}
+
 #[tauri::command]
 fn export_world_file(path_without_ext: String, method: String, state: State<AppState>) -> Result<(), String> {
     let list = state.constraints.lock().map_err(|e| e.to_string())?;
@@ -147,6 +186,45 @@ fn export_world_file(path_without_ext: String, method: String, state: State<AppS
         }
         _ => Err(format!("unknown method {}", method)),
     }
+}
+
+#[tauri::command]
+fn export_georeferenced_geotiff(state: State<AppState>, method: String, output_without_ext: String) -> Result<(), String> {
+    // Compose map->ref pixel transform with ref pixel->world from .tfw or default
+    let list = state.constraints.lock().map_err(|e| e.to_string())?;
+    let pairs = solver::pairs_from_constraints(&list);
+    let map2ref = match method.as_str() {
+        "similarity" => {
+            let t = solver::fit_similarity_from_pairs(&pairs).map_err(|e| e.to_string())?;
+            let s = t.params[0]; let th = t.params[1]; let (c,si)=(th.cos(), th.sin());
+            [s*c, -s*si, s*si, s*c, t.params[2], t.params[3]]
+        }
+        "affine" => solver::fit_affine_from_pairs(&pairs).map_err(|e| e.to_string())?.params,
+        _ => return Err("unknown method".into()),
+    };
+    let ref_path = state.reference_path.lock().map_err(|e| e.to_string())?.clone().ok_or_else(|| "reference path not set".to_string())?;
+    let ref_base = ref_path.replace(/\.[^.]+$/, "");
+    // Try reading reference world file
+    let ref_aff = match io::read_world_file(&ref_base) {
+        Ok(a) => a,
+        Err(_) => [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], // identity fallback
+    };
+    // Compose: world = ref_aff ∘ map2ref; 2x2 linear and translation
+    let a = ref_aff;
+    let b = map2ref;
+    let lin = [
+        a[0]*b[0] + a[1]*b[2],
+        a[0]*b[1] + a[1]*b[3],
+        a[2]*b[0] + a[3]*b[2],
+        a[2]*b[1] + a[3]*b[3],
+    ];
+    let trans = [a[0]*b[4] + a[1]*b[5] + a[4], a[2]*b[4] + a[3]*b[5] + a[5]];
+    io::write_world_file(&output_without_ext, [lin[0], lin[1], lin[2], lin[3], trans[0], trans[1]])
+        .map_err(|e| e.to_string())?;
+    // Write PRJ with NAD83(2011) as a reasonable default if no reference .prj found
+    let prj_wkt = "GEOGCS[\"NAD83(2011)\",DATUM[\"NAD83_National_Spatial_Reference_System_2011\",SPHEROID[\"GRS 1980\",6378137,298.257222101]],PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433]]";
+    let _ = io::write_prj(&output_without_ext, prj_wkt);
+    Ok(())
 }
 
 fn main() {

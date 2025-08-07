@@ -41,3 +41,25 @@ pub fn write_world_file(path_without_ext: &str, affine: [f64; 6]) -> Result<()> 
     write(tfw, out)?;
     Ok(())
 }
+
+pub fn read_world_file(path_without_ext: &str) -> Result<[f64; 6]> {
+    use std::fs::read_to_string;
+    use std::path::PathBuf;
+    let mut tfw = PathBuf::from(path_without_ext);
+    tfw.set_extension("tfw");
+    let s = read_to_string(tfw)?;
+    let mut vals = [0.0f64; 6];
+    for (i, line) in s.lines().enumerate().take(6) {
+        vals[i] = line.trim().parse::<f64>()?;
+    }
+    Ok(vals)
+}
+
+pub fn write_prj(path_without_ext: &str, wkt: &str) -> Result<()> {
+    use std::fs::write;
+    use std::path::PathBuf;
+    let mut prj = PathBuf::from(path_without_ext);
+    prj.set_extension("prj");
+    write(prj, wkt.as_bytes())?;
+    Ok(())
+}

@@ -32,9 +32,11 @@ pub struct QualityMetrics {
     pub rmse: f64,
     pub p90_error: f64,
     pub residuals: Vec<f64>,
+    pub residuals_by_id: Vec<(u64, f64)>,
+    pub warnings: Vec<String>,
 }
 impl Default for QualityMetrics {
-    fn default() -> Self { Self { rmse: 0.0, p90_error: 0.0, residuals: Vec::new() } }
+    fn default() -> Self { Self { rmse: 0.0, p90_error: 0.0, residuals: Vec::new(), residuals_by_id: Vec::new(), warnings: Vec::new() } }
 }
 
 // Placeholder structs for transform kinds
