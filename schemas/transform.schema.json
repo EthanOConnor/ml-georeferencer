@@ -1,57 +1,36 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "TransformStack",
   "type": "object",
   "properties": {
-    "global": {
-      "type": "object",
-      "properties": {
-        "type": {
-          "enum": [
-            "similarity",
-            "affine",
-            "homography"
-          ]
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    "local": {
-      "type": "object",
-      "properties": {
-        "type": {
-          "enum": [
-            "tps",
-            "ffd",
-            "pwa"
-          ]
-        }
-      },
-      "required": [
-        "type"
-      ]
-    },
-    "quality": {
-      "type": "object",
-      "properties": {
-        "rmse_px": {
-          "type": "number"
-        },
-        "rmse_m": {
-          "type": "number"
-        },
-        "n_gcps": {
-          "type": "integer"
-        },
-        "max_resid_m": {
-          "type": "number"
-        }
+    "transforms": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/TransformKind"
       }
     }
   },
-  "required": [
-    "global"
-  ]
+  "required": ["transforms"],
+  "definitions": {
+    "TransformKind": {
+      "oneOf": [
+        { "$ref": "#/definitions/Similarity" },
+        { "$ref": "#/definitions/Affine" },
+        { "$ref": "#/definitions/Homography" },
+        { "$ref": "#/definitions/Tps" },
+        { "$ref": "#/definitions/Ffd" }
+      ]
+    },
+    "Similarity": { "type": "object", "properties": { "Similarity": { "$ref": "#/definitions/SimilarityFields" } }, "required": ["Similarity"] },
+    "SimilarityFields": { "type": "object", "properties": { "params": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 } }, "required": ["params"] },
+    "Affine": { "type": "object", "properties": { "Affine": { "$ref": "#/definitions/AffineFields" } }, "required": ["Affine"] },
+    "AffineFields": { "type": "object", "properties": { "params": { "type": "array", "items": { "type": "number" }, "minItems": 6, "maxItems": 6 } }, "required": ["params"] },
+    "Homography": { "type": "object", "properties": { "Homography": { "$ref": "#/definitions/HomographyFields" } }, "required": ["Homography"] },
+    "HomographyFields": { "type": "object", "properties": { "params": { "type": "array", "items": { "type": "number" }, "minItems": 9, "maxItems": 9 } }, "required": ["params"] },
+    "Tps": { "type": "object", "properties": { "Tps": { "$ref": "#/definitions/TpsFields" } }, "required": ["Tps"] },
+    "TpsFields": { "type": "object", "properties": { "control_points": { "type": "array", "items": { "$ref": "#/definitions/Point" } }, "lambda": { "type": "number" } }, "required": ["control_points", "lambda"] },
+    "Ffd": { "type": "object", "properties": { "Ffd": { "$ref": "#/definitions/FfdFields" } }, "required": ["Ffd"] },
+    "FfdFields": { "type": "object", "properties": { "control_points": { "type": "array", "items": { "$ref": "#/definitions/Point" } }, "grid_size": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 } }, "required": ["control_points", "grid_size"] },
+    "Point": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 }
+  }
 }

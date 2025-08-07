@@ -1,13 +1,9 @@
 [package]
-name = "io"
+name = "types"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-anyhow.workspace = true
-thiserror.workspace = true
-rusqlite = "0.30"
-cog-core = "0.2"
-pdfium-render = "0.8"
+serde = { workspace = true, features = ["derive"] }

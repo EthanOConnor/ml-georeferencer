@@ -1,0 +1,5 @@
+{
+  "map_path": "./map.png",
+  "reference_path": "./reference.tiff",
+  "crs": "EPSG:3857"
+}

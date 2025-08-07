@@ -1,14 +1,16 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+use anyhow::Result;
+
+pub fn load_mbtiles(path: &str) -> Result<()> {
+    // ... implementation ...
+    Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub fn load_cog(path: &str) -> Result<()> {
+    // ... implementation ...
+    Ok(())
+}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+pub fn load_pdf(path: &str) -> Result<()> {
+    // ... implementation ...
+    Ok(())
 }

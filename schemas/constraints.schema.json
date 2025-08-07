@@ -1,19 +1,24 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Constraints",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ConstraintKind",
   "type": "object",
-  "properties": {
-    "points": {
-      "type": "array"
-    },
-    "lines": {
-      "type": "array"
-    },
-    "areas": {
-      "type": "array"
-    },
-    "anchors": {
-      "type": "array"
-    }
+  "oneOf": [
+    { "$ref": "#/definitions/Point" },
+    { "$ref": "#/definitions/Polyline" },
+    { "$ref": "#/definitions/Polygon" },
+    { "$ref": "#/definitions/AnisotropicPin" },
+    { "$ref": "#/definitions/Anchor" }
+  ],
+  "definitions": {
+    "Point": { "type": "object", "properties": { "Point": { "$ref": "#/definitions/PointFields" } }, "required": ["Point"] },
+    "PointFields": { "type": "object", "properties": { "id": { "type": "integer" }, "point": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 }, "weight": { "type": "number" } }, "required": ["id", "point", "weight"] },
+    "Polyline": { "type": "object", "properties": { "Polyline": { "$ref": "#/definitions/PolylineFields" } }, "required": ["Polyline"] },
+    "PolylineFields": { "type": "object", "properties": { "id": { "type": "integer" }, "points": { "type": "array", "items": { "$ref": "#/definitions/Point" } }, "weight": { "type": "number" } }, "required": ["id", "points", "weight"] },
+    "Polygon": { "type": "object", "properties": { "Polygon": { "$ref": "#/definitions/PolygonFields" } }, "required": ["Polygon"] },
+    "PolygonFields": { "type": "object", "properties": { "id": { "type": "integer" }, "points": { "type": "array", "items": { "$ref": "#/definitions/Point" } }, "weight": { "type": "number" } }, "required": ["id", "points", "weight"] },
+    "AnisotropicPin": { "type": "object", "properties": { "AnisotropicPin": { "$ref": "#/definitions/AnisotropicPinFields" } }, "required": ["AnisotropicPin"] },
+    "AnisotropicPinFields": { "type": "object", "properties": { "id": { "type": "integer" }, "point": { "$ref": "#/definitions/Point" }, "sigma_major": { "type": "number" }, "sigma_minor": { "type": "number" }, "angle": { "type": "number" } }, "required": ["id", "point", "sigma_major", "sigma_minor", "angle"] },
+    "Anchor": { "type": "object", "properties": { "Anchor": { "$ref": "#/definitions/AnchorFields" } }, "required": ["Anchor"] },
+    "AnchorFields": { "type": "object", "properties": { "id": { "type": "integer" }, "point": { "$ref": "#/definitions/Point" } }, "required": ["id", "point"] }
   }
 }

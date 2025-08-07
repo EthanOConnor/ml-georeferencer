@@ -38,3 +38,9 @@ spec:
 ci:
 	cargo --version && rustc --version
 	@echo "Specs present:" && ls docs
+
+dev:
+    cd apps/desktop && pnpm install && pnpm run dev
+
+demo:
+    echo "Opening sample project..."
