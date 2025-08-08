@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schemas.tauri.app/v2/capabilities.schema.json",
+  "identifier": "global-shortcut",
+  "description": "Allow registering global shortcuts.",
+  "permissions": [
+    "global-shortcut:default"
+  ]
+}

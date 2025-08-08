@@ -4,7 +4,7 @@ use image::ImageFormat;
 use proj::Proj;
 use std::io::Cursor;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Georef {
     pub affine: [f64; 6],
     pub wkt: Option<String>,

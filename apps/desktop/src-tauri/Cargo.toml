@@ -5,7 +5,15 @@ authors = ["You"]
 edition = "2021"
 
 [dependencies]
-tauri = { version = "1.6.1", features = ["api-all"] }
+tauri = { version = "2.7.0", features = ["custom-protocol"] }
+tauri-plugin-fs = "2.4.0"
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-http = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-os = "2"
+tauri-plugin-process = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 types = { path = "../../../crates/types" }
@@ -13,5 +21,6 @@ io = { path = "../../../crates/io" }
 solver = { path = "../../../crates/solver" }
 nalgebra = "0.32"
 
+
 [build-dependencies]
-tauri-build = { version = "1.5.2", features = [] }
+tauri-build = { version = "2.3.1", features = ["config-toml", "config-json5"] }

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schemas.tauri.app/v2/capabilities.schema.json",
+  "identifier": "http",
+  "description": "Allow HTTP requests for data fetching.",
+  "permissions": [
+    "http:default"
+  ]
+}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Canvas, { OverlayTransform } from './Canvas';
-import { open } from '@tauri-apps/api/dialog';
-import { invoke } from '@tauri-apps/api/tauri';
+import { open } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 
 function App() {
   const [mapPath, setMapPath] = useState<string | null>(null);
@@ -13,6 +13,9 @@ function App() {
   const [solution, setSolution] = useState<{ method: 'similarity' | 'affine'; t: OverlayTransform; rmse: number; p90: number } | null>(null);
   const [residuals, setResiduals] = useState<{ id: number; r: number }[]>([]);
   const [globalOnly, setGlobalOnly] = useState(true);
+  const [errorUnit, setErrorUnit] = useState<'pixels' | 'meters' | 'mapmm'>('pixels');
+  const [mapScale, setMapScale] = useState<number | null>(null);
+  const [referenceGeoref, setReferenceGeoref] = useState<{ affine: number[]; wkt: string | null } | null>(null);
 
   async function pickMap() {
     const path = await open({ multiple: false, filters: [{ name: 'TIFF', extensions: ['tif', 'tiff'] }] });
@@ -33,6 +36,21 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    async function fetchGeoref() {
+      if (refPath) {
+        try {
+          const geo = await invoke('get_reference_georef');
+          setReferenceGeoref(geo as { affine: number[]; wkt: string | null } | null);
+        } catch (error) {
+          console.error("Error fetching georeference:", error);
+          setReferenceGeoref(null);
+        }
+      }
+    }
+    fetchGeoref();
+  }, [refPath]);
+
   async function addPair(src: [number, number], dst: [number, number]) {
     const c = {
       PointPair: {
@@ -50,21 +68,26 @@ function App() {
   }
 
   async function solve(method: 'similarity' | 'affine') {
-    const [stack, metrics] = (await invoke('solve_global', {
-      method,
-      error_unit: 'pixels',
-      map_scale: null,
-    })) as [
-      any,
-      { rmse: number; p90_error: number; residuals_by_id: [number, number][] }
-    ];
-    const top = stack.transforms?.[0];
-    if (top?.Similarity && method === 'similarity') {
-      setSolution({ method, t: { kind: 'similarity', params: top.Similarity.params }, rmse: metrics.rmse, p90: metrics.p90_error });
-    } else if (top?.Affine && method === 'affine') {
-      setSolution({ method, t: { kind: 'affine', params: top.Affine.params }, rmse: metrics.rmse, p90: metrics.p90_error });
+    try {
+      const [stack, metrics] = (await invoke('solve_global', {
+        method,
+        errorUnit,
+        mapScale,
+      })) as [
+        any,
+        { rmse: number; p90_error: number; residuals_by_id: [number, number][] }
+      ];
+      const top = stack.transforms?.[0];
+      if (top?.Similarity && method === 'similarity') {
+        setSolution({ method, t: { kind: 'similarity', params: top.Similarity.params }, rmse: metrics.rmse, p90: metrics.p90_error });
+      } else if (top?.Affine && method === 'affine') {
+        setSolution({ method, t: { kind: 'affine', params: top.Affine.params }, rmse: metrics.rmse, p90: metrics.p90_error });
+      }
+      setResiduals(metrics.residuals_by_id.map(([id, r]) => ({ id, r })));
+    } catch (error) {
+      console.error("Error solving:", error);
+      alert(`Error solving: ${error}`);
     }
-    setResiduals(metrics.residuals_by_id.map(([id, r]) => ({ id, r })));
   }
 
   async function exportWorld() {
@@ -124,6 +147,22 @@ function App() {
           <button onClick={copyProj} disabled={!solution}>Copy PROJ</button>
         </div>
         <div style={{ marginBottom: 8 }}>
+          <label htmlFor="errorUnit">Error Units:</label>
+          <select id="errorUnit" value={errorUnit} onChange={(e) => setErrorUnit(e.target.value as 'pixels' | 'meters' | 'mapmm')}>
+            <option value="pixels">Pixels</option>
+            <option value="meters">Meters</option>
+            <option value="mapmm">Map Millimeters</option>
+          </select>
+          {errorUnit === 'mapmm' && (
+            <input
+              type="number"
+              placeholder="Map Scale (e.g., 10000)"
+              value={mapScale || ''}
+              onChange={(e) => setMapScale(e.target.value ? parseFloat(e.target.value) : null)}
+            />
+          )}
+        </div>
+        <div style={{ marginBottom: 8 }}>
           <label>
             <input type="checkbox" checked={globalOnly} onChange={(e) => setGlobalOnly(e.target.checked)} /> Global only
           </label>
@@ -137,6 +176,14 @@ function App() {
         {solution && (
           <div style={{ marginBottom: 8 }}>
             <strong>Solution:</strong> {solution.method} | RMSE {solution.rmse.toFixed(3)} | P90 {solution.p90.toFixed(3)}
+          </div>
+        )}
+        {referenceGeoref && (
+          <div style={{ marginBottom: 8 }}>
+            <h3>Reference Georeferencing</h3>
+            <p>Affine: [{referenceGeoref.affine.map(a => a.toFixed(3)).join(', ')}]</p>
+            <p>Pixel Scale: {((Math.abs(referenceGeoref.affine[0]) + Math.abs(referenceGeoref.affine[3])) / 2).toFixed(3)} units/pixel</p>
+            {referenceGeoref.wkt && <p>WKT: {referenceGeoref.wkt}</p>}
           </div>
         )}
         {residuals.length > 0 && (

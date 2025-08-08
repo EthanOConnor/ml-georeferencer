@@ -1,1 +1,71 @@
-{"$schema": "../node_modules/@tauri-apps/cli/schema.json", "build": {"beforeBuildCommand": "pnpm run build", "beforeDevCommand": "pnpm run dev", "devPath": "http://localhost:5173", "distDir": "../dist"}, "package": {"productName": "ml-georeferencer-desktop", "version": "0.1.0"}, "tauri": {"allowlist": {"all": true}, "bundle": {"active": true, "category": "DeveloperTool", "copyright": "", "deb": {"depends": []}, "externalBin": [], "icon": [], "identifier": "com.tauri.dev", "longDescription": "", "macOS": {"entitlements": null, "exceptionDomain": "", "frameworks": [], "providerShortName": null, "signingIdentity": null}, "resources": [], "shortDescription": "", "targets": "all", "windows": {"certificateThumbprint": null, "digestAlgorithm": "sha256", "timestampUrl": ""}}, "security": {"csp": null}, "updater": {"active": false}, "windows": [{"fullscreen": false, "height": 600, "resizable": true, "title": "ml-georeferencer-desktop", "width": 800}]}}
+{
+  "$schema": "../node_modules/@tauri-apps/cli/schema.json",
+  "build": {
+    "beforeBuildCommand": "pnpm run build",
+    "beforeDevCommand": "pnpm run dev",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173"
+  },
+  "bundle": {
+    "active": true,
+    "category": "DeveloperTool",
+    "copyright": "",
+    "targets": "all",
+    "externalBin": [],
+    "icon": [],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    },
+    "longDescription": "",
+    "macOS": {
+      "entitlements": null,
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null
+    },
+    "resources": [],
+    "shortDescription": "",
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    }
+  },
+  "productName": "ml-georeferencer-desktop",
+  "mainBinaryName": "ml-georeferencer-desktop",
+  "version": "0.1.0",
+  "identifier": "com.mlgeoreferencer.app",
+  "plugins": {},
+  "app": {
+    "windows": [
+      {
+        "fullscreen": false,
+        "height": 600,
+        "resizable": true,
+        "title": "ml-georeferencer-desktop",
+        "width": 800,
+        "useHttpsScheme": true
+      }
+    ],
+    "security": {
+      "capabilities": [
+        "core:default",
+        "fs",
+        "shell",
+        "dialog",
+        "http",
+        "notification",
+        "global-shortcut",
+        "os",
+        "process"
+      ],
+      "assetProtocol": {
+        "scope": ["$APP/*"]
+      },
+      "csp": null
+    }
+  }
+}

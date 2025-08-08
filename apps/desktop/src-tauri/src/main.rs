@@ -1,5 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use tauri_plugin_fs::init as fs_init;
+use tauri_plugin_process::init as process_init;
+use tauri_plugin_os::init as os_init;
+use tauri_plugin_global_shortcut::init as global_shortcut_init;
+use tauri_plugin_notification::init as notification_init;
+use tauri_plugin_http::init as http_init;
+use tauri_plugin_dialog::init as dialog_init;
+use tauri_plugin_shell::init as shell_init;
+use tauri_plugin_fs::init as fs_init;
 use std::sync::Mutex;
 use tauri::State;
 use types::{ConstraintKind, ErrorUnit, QualityMetrics, TransformKind, TransformStack};
@@ -303,6 +312,14 @@ fn export_georeferenced_geotiff(state: State<AppState>, method: String, output_w
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_global_shortcut::init())
+        .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             set_map_path,
@@ -314,7 +331,14 @@ fn main() {
             solve_global,
             get_proj_string,
             export_world_file,
+            export_georeferenced_geotiff,
+            get_reference_georef,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[tauri::command]
+fn get_reference_georef(state: State<AppState>) -> Result<Option<io::Georef>, String> {
+    Ok(state.ref_georef.lock().map_err(|e| e.to_string())?.clone())
 }

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schemas.tauri.app/v2/capabilities.schema.json",
+  "identifier": "dialog",
+  "description": "Allow opening dialogs for file selection.",
+  "permissions": [
+    "dialog:default",
+    "dialog:allow-open"
+  ]
+}

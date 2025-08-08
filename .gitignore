@@ -1,5 +1,59 @@
+# Build artifacts (Rust)
 /target
+
+# macOS
 .DS_Store
-apps/desktop/node_modules/
-apps/desktop/dist/
+
+# Node.js monorepo
+node_modules/
+**/node_modules/
+
+# Vite / general web build output
+dist/
+**/dist/
+build/
+**/build/
+
+# Tauri (generated files)
+**/src-tauri/gen/
+
+# Package manager state / logs
 **/.pnpm-workspace-state-v1.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+logs
+logs/*
+*.log
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Env files (keep examples)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# TypeScript / tooling caches
+*.tsbuildinfo
+.eslintcache
+
+# Common caches
+.cache/
+**/.cache/
+.parcel-cache/
+**/.parcel-cache/
+.vite/
+**/.vite/
+
+# Editors/IDEs
+.vscode/
+.idea/
+.history/
+
+# OS-specific
+Thumbs.db

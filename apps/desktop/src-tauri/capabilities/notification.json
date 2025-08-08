@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schemas.tauri.app/v2/capabilities.schema.json",
+  "identifier": "notification",
+  "description": "Allow sending notifications.",
+  "permissions": [
+    "notification:default"
+  ]
+}
