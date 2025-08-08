@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "apps/desktop/src-tauri"]
+members = ["crates/*", "apps/desktop/src-tauri", "tools/icon-gen"]
 default-members = ["crates/*"]
 
 [workspace.package]
