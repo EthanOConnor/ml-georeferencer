@@ -1,9 +1,0 @@
-{
-  "$schema": "https://schemas.tauri.app/v2/capabilities.schema.json",
-  "identifier": "shell",
-  "description": "Allow executing safe local commands needed by the georeferencer toolchain.",
-  "permissions": [
-    "shell:default",
-    "shell:allow-execute"
-  ]
-}

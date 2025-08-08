@@ -15,7 +15,12 @@ setup:
 	@echo "Bootstrap complete."
 
 build:
-	cargo build --all-targets
+    cargo build --all-targets
+
+# Build everything including the desktop bundle
+build-all:
+    cargo build --all-targets
+    pnpm -C apps/desktop tauri:build
 
 test:
 	cargo test --all-targets
@@ -41,6 +46,14 @@ ci:
 
 dev:
     cd apps/desktop && pnpm install && pnpm run dev
+
+# Run the Tauri dev app (desktop)
+desktop-dev:
+    cd apps/desktop && pnpm tauri:dev
+
+# Build the Tauri desktop app bundle
+desktop-build:
+    pnpm -C apps/desktop tauri:build
 
 demo:
     echo "Opening sample project..."

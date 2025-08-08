@@ -48,7 +48,7 @@ workload and ensure the WebView2 runtime is present. Then install pnpm:
 npm install -g pnpm
 ```
 
-### Launch
+### Launch (Dev)
 
 ```bash
 cd apps/desktop
@@ -58,3 +58,28 @@ pnpm run tauri:dev
 
 This opens a window with map and reference panes where you can add pins,
 toggle the "Global only" solver and view residuals.
+
+## Canonical Build
+
+This repo is a Rust + Node monorepo. Use pnpm for JS and Cargo for Rust.
+
+- Install deps (root):
+  - `pnpm install`
+- Build Rust crates:
+  - `cargo build --all-targets`
+- Type-check frontend:
+  - `pnpm -C apps/desktop exec tsc -p tsconfig.json --noEmit`
+- Desktop dev (Tauri):
+  - `pnpm -C apps/desktop tauri:dev`
+- Desktop release bundle:
+  - `pnpm -C apps/desktop tauri:build`
+
+Shortcuts with just:
+- `just build` – Build Rust workspace
+- `just desktop-dev` – Run desktop app in dev
+- `just desktop-build` – Bundle desktop app
+- `just build-all` – Build Rust crates and desktop bundle
+
+Notes:
+- Tauri v2 capabilities are minimized to `core` and `dialog` for least privilege.
+- The bundle identifier is `com.mlgeoreferencer.desktop` (no `.app` suffix to avoid macOS conflicts).

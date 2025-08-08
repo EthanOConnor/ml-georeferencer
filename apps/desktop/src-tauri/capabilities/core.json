@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schemas.tauri.app/v2/capabilities.schema.json",
+  "identifier": "core",
+  "description": "Core Tauri permissions needed by the app.",
+  "permissions": [
+    "core:default"
+  ]
+}

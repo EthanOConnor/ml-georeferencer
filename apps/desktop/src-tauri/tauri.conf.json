@@ -34,10 +34,10 @@
       }
     }
   },
-  "productName": "ml-georeferencer-desktop",
-  "mainBinaryName": "ml-georeferencer-desktop",
+  "productName": "ML Georeferencer",
+  "mainBinaryName": "ml-georeferencer",
   "version": "0.1.0",
-  "identifier": "com.mlgeoreferencer.app",
+  "identifier": "com.mlgeoreferencer.desktop",
   "plugins": {},
   "app": {
     "windows": [
@@ -45,22 +45,15 @@
         "fullscreen": false,
         "height": 600,
         "resizable": true,
-        "title": "ml-georeferencer-desktop",
+        "title": "ML Georeferencer",
         "width": 800,
         "useHttpsScheme": true
       }
     ],
     "security": {
       "capabilities": [
-        "core:default",
-        "fs",
-        "shell",
-        "dialog",
-        "http",
-        "notification",
-        "global-shortcut",
-        "os",
-        "process"
+        "core",
+        "dialog"
       ],
       "assetProtocol": {
         "scope": ["$APP/*"]
