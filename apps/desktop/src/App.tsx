@@ -34,14 +34,27 @@ function App() {
   }
 
   async function addPair(src: [number, number], dst: [number, number]) {
-    const c = { PointPair: { id: Date.now(), src, dst, weight: 1.0 } } as const;
+    const c = {
+      PointPair: {
+        id: Date.now(),
+        src,
+        dst,
+        dst_real: null,
+        dst_local: null,
+        weight: 1.0,
+      },
+    } as const;
     const list = (await invoke('add_constraint', { c })) as any[];
     const pairs = list.filter((x) => 'PointPair' in x).map((x) => x.PointPair);
     setConstraints(pairs);
   }
 
   async function solve(method: 'similarity' | 'affine') {
-    const [stack, metrics] = (await invoke('solve_global', { method })) as [
+    const [stack, metrics] = (await invoke('solve_global', {
+      method,
+      error_unit: 'pixels',
+      map_scale: null,
+    })) as [
       any,
       { rmse: number; p90_error: number; residuals_by_id: [number, number][] }
     ];
