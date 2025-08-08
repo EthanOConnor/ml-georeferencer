@@ -220,7 +220,11 @@ fn export_georeferenced_geotiff(state: State<AppState>, method: String, output_w
         _ => return Err("unknown method".into()),
     };
     let ref_path = state.reference_path.lock().map_err(|e| e.to_string())?.clone().ok_or_else(|| "reference path not set".to_string())?;
-    let ref_base = ref_path.replace(/\.[^.]+$/, "");
+    // Strip extension from reference path
+    let ref_base = std::path::Path::new(&ref_path)
+        .with_extension("")
+        .to_string_lossy()
+        .into_owned();
     // Try reading reference world file
     let ref_aff = match io::read_world_file(&ref_base) {
         Ok(a) => a,
