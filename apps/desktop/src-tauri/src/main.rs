@@ -2,13 +2,14 @@
 
 use std::sync::Mutex;
 use tauri::State;
-use types::{ConstraintKind, QualityMetrics, TransformKind, TransformStack};
+use types::{ConstraintKind, ErrorUnit, QualityMetrics, TransformKind, TransformStack};
 
 #[derive(Default)]
 struct AppState {
     map_path: Mutex<Option<String>>,
     reference_path: Mutex<Option<String>>,
     constraints: Mutex<Vec<ConstraintKind>>,
+    ref_georef: Mutex<Option<io::Georef>>,
 }
 
 #[tauri::command]
@@ -19,6 +20,12 @@ fn set_map_path(path: String, state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn set_reference_path(path: String, state: State<AppState>) -> Result<(), String> {
+    let base = std::path::Path::new(&path)
+        .with_extension("")
+        .to_string_lossy()
+        .into_owned();
+    let georef = io::read_georeferencing(&base).ok();
+    *state.ref_georef.lock().map_err(|e| e.to_string())? = georef;
     *state.reference_path.lock().map_err(|e| e.to_string())? = Some(path);
     Ok(())
 }
@@ -38,7 +45,19 @@ fn get_constraints(state: State<AppState>) -> Result<Vec<ConstraintKind>, String
 }
 
 #[tauri::command]
-fn add_constraint(c: ConstraintKind, state: State<AppState>) -> Result<Vec<ConstraintKind>, String> {
+fn add_constraint(mut c: ConstraintKind, state: State<AppState>) -> Result<Vec<ConstraintKind>, String> {
+    if let ConstraintKind::PointPair { dst, dst_real, dst_local, .. } = &mut c {
+        if let Some(geo) = state.ref_georef.lock().map_err(|e| e.to_string())?.as_ref() {
+            if dst_real.is_none() {
+                *dst_real = Some(io::pixel_to_world(geo, *dst));
+            }
+            if dst_local.is_none() {
+                if let Ok(Some(local)) = io::pixel_to_local_meters(geo, *dst, [0.0, 0.0]) {
+                    *dst_local = Some(local);
+                }
+            }
+        }
+    }
     let mut list = state.constraints.lock().map_err(|e| e.to_string())?;
     list.push(c);
     Ok(list.clone())
@@ -52,7 +71,12 @@ fn delete_constraint(id: u64, state: State<AppState>) -> Result<Vec<ConstraintKi
 }
 
 #[tauri::command]
-fn solve_global(method: String, state: State<AppState>) -> Result<(TransformStack, QualityMetrics), String> {
+fn solve_global(
+    method: String,
+    error_unit: String,
+    map_scale: Option<f64>,
+    state: State<AppState>,
+) -> Result<(TransformStack, QualityMetrics), String> {
     let list = state.constraints.lock().map_err(|e| e.to_string())?;
     let pairs = solver::pairs_from_constraints(&list);
     if pairs.len() < 2 && method == "similarity" {
@@ -65,23 +89,52 @@ fn solve_global(method: String, state: State<AppState>) -> Result<(TransformStac
     if variance_low(&pairs) {
         warnings.push("Low variance in source points; results may be unstable".to_string());
     }
+    let pixel_size = state
+        .ref_georef
+        .lock()
+        .map_err(|e| e.to_string())?
+        .as_ref()
+        .map(|g| {
+            let ax = (g.affine[0].powi(2) + g.affine[2].powi(2)).sqrt();
+            let ay = (g.affine[1].powi(2) + g.affine[3].powi(2)).sqrt();
+            (ax + ay) / 2.0
+        })
+        .unwrap_or(1.0);
+    let target_unit = match error_unit.as_str() {
+        "meters" => ErrorUnit::Meters,
+        "mapmm" => ErrorUnit::MapMillimeters,
+        _ => ErrorUnit::Pixels,
+    };
+
     match method.as_str() {
         "similarity" => {
             let t = solver::fit_similarity_from_pairs(&pairs).map_err(|e| e.to_string())?;
             let (rmse, p90, residuals) = metrics_similarity(&t, &pairs);
             let residuals_by_id = residuals_by_id_similarity(&t, &list);
+            let mut qm = QualityMetrics { rmse, p90_error: p90, residuals, residuals_by_id, warnings, unit: ErrorUnit::Pixels, map_scale: None };
+            if target_unit != ErrorUnit::Pixels {
+                qm.convert_units(pixel_size, map_scale, target_unit);
+            } else {
+                qm.map_scale = map_scale;
+            }
             Ok((
                 TransformStack { transforms: vec![TransformKind::Similarity(t)] },
-                QualityMetrics { rmse, p90_error: p90, residuals, residuals_by_id, warnings },
+                qm,
             ))
         }
         "affine" => {
             let t = solver::fit_affine_from_pairs(&pairs).map_err(|e| e.to_string())?;
             let (rmse, p90, residuals) = metrics_affine(&t, &pairs);
             let residuals_by_id = residuals_by_id_affine(&t, &list);
+            let mut qm = QualityMetrics { rmse, p90_error: p90, residuals, residuals_by_id, warnings, unit: ErrorUnit::Pixels, map_scale: None };
+            if target_unit != ErrorUnit::Pixels {
+                qm.convert_units(pixel_size, map_scale, target_unit);
+            } else {
+                qm.map_scale = map_scale;
+            }
             Ok((
                 TransformStack { transforms: vec![TransformKind::Affine(t)] },
-                QualityMetrics { rmse, p90_error: p90, residuals, residuals_by_id, warnings },
+                qm,
             ))
         }
         _ => Err(format!("unknown method {}", method)),
