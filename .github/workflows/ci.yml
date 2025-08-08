@@ -26,7 +26,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: TypeScript check
-        run: pnpm -C apps/desktop tsc --noEmit
+        run: pnpm -C apps/desktop typecheck
+
+      - name: ESLint
+        run: pnpm -C apps/desktop lint
 
       - name: Vite build
         run: pnpm -C apps/desktop build
