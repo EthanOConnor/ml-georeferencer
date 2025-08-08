@@ -45,6 +45,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "fullscreen": false,
         "height": 600,
         "resizable": true,
@@ -61,7 +62,7 @@
       "assetProtocol": {
         "scope": ["$APP/*"]
       },
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' data: filesystem:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://*; object-src 'none'; frame-ancestors 'none'"
     }
   }
 }

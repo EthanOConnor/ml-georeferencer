@@ -1,0 +1,58 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'pnpm'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install pnpm
+        run: corepack prepare pnpm@10 --activate
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript check
+        run: pnpm -C apps/desktop tsc --noEmit
+
+      - name: Vite build
+        run: pnpm -C apps/desktop build
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.89.0
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Rust fmt & clippy
+        run: |
+          cargo fmt --all --check
+          cargo clippy --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --all --locked
+
+      - name: Security (deny/audit)
+        run: |
+          cargo install cargo-deny || true
+          cargo install cargo-audit || true
+          cargo deny check || true
+          cargo audit || true
+
+      - name: Tauri bundle
+        run: pnpm -C apps/desktop tauri build
