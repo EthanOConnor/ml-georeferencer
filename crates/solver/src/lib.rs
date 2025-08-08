@@ -158,3 +158,80 @@ pub fn pairs_from_constraints(constraints: &[ConstraintKind]) -> Vec<([f64; 2], 
         })
         .collect()
 }
+
+/// Invert a similarity transform.
+pub fn invert_similarity(t: &Similarity) -> Similarity {
+    let s = t.params[0];
+    let theta = t.params[1];
+    let tx = t.params[2];
+    let ty = t.params[3];
+    let inv_s = 1.0 / s;
+    let inv_theta = -theta;
+    let c = inv_theta.cos();
+    let si = inv_theta.sin();
+    let inv_tx = -inv_s * (c * tx - si * ty);
+    let inv_ty = -inv_s * (si * tx + c * ty);
+    Similarity { params: [inv_s, inv_theta, inv_tx, inv_ty] }
+}
+
+/// Compose two similarity transforms (a followed by b).
+pub fn compose_similarity(a: &Similarity, b: &Similarity) -> Similarity {
+    let (sa, ta, txa, tya) = (a.params[0], a.params[1], a.params[2], a.params[3]);
+    let (sb, tb, txb, tyb) = (b.params[0], b.params[1], b.params[2], b.params[3]);
+    let ca = ta.cos();
+    let sa_sin = ta.sin();
+    let s = sa * sb;
+    let theta = ta + tb;
+    let tx = sa * (ca * txb - sa_sin * tyb) + txa;
+    let ty = sa * (sa_sin * txb + ca * tyb) + tya;
+    Similarity { params: [s, theta, tx, ty] }
+}
+
+/// Convert similarity to a PROJ pipeline string.
+pub fn similarity_to_proj(t: &Similarity) -> String {
+    let s = t.params[0];
+    let th = t.params[1];
+    let (c, si) = (th.cos(), th.sin());
+    let a = s * c;
+    let b = -s * si;
+    let d = s * si;
+    let e = s * c;
+    let tx = t.params[2];
+    let ty = t.params[3];
+    format!("+proj=pipeline +step +proj=affine +s11={a} +s12={b} +s21={d} +s22={e} +xoff={tx} +yoff={ty}")
+}
+
+/// Invert an affine transform. Returns None if not invertible.
+pub fn invert_affine(t: &Affine) -> Option<Affine> {
+    let [a, b, c, d, tx, ty] = t.params;
+    let det = a * d - b * c;
+    if det.abs() < f64::EPSILON {
+        return None;
+    }
+    let inv_a = d / det;
+    let inv_b = -b / det;
+    let inv_c = -c / det;
+    let inv_d = a / det;
+    let inv_tx = -(inv_a * tx + inv_b * ty);
+    let inv_ty = -(inv_c * tx + inv_d * ty);
+    Some(Affine { params: [inv_a, inv_b, inv_c, inv_d, inv_tx, inv_ty] })
+}
+
+/// Compose two affine transforms (a followed by b).
+pub fn compose_affine(a: &Affine, b: &Affine) -> Affine {
+    let [a1, b1, c1, d1, tx1, ty1] = a.params;
+    let [a2, b2, c2, d2, tx2, ty2] = b.params;
+    let a_ = a2 * a1 + b2 * c1;
+    let b_ = a2 * b1 + b2 * d1;
+    let c_ = c2 * a1 + d2 * c1;
+    let d_ = c2 * b1 + d2 * d1;
+    let tx_ = a2 * tx1 + b2 * ty1 + tx2;
+    let ty_ = c2 * tx1 + d2 * ty1 + ty2;
+    Affine { params: [a_, b_, c_, d_, tx_, ty_] }
+}
+
+/// Convert an affine transform to a PROJ pipeline string.
+pub fn affine_to_proj(t: &Affine) -> String {
+    let [a, b, c, d, tx, ty] = t.params;
+    format!("+proj=pipeline +step +proj=affine +s11={a} +s12={b} +s21={c} +s22={d} +xoff={tx} +yoff={ty}")
+}

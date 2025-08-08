@@ -12,17 +12,17 @@ pub fn load_raster(path: &str) -> Result<String> {
     Ok(data_uri)
 }
 
-pub fn load_mbtiles(path: &str) -> Result<()> {
+pub fn load_mbtiles(_path: &str) -> Result<()> {
     // ... implementation ...
     Ok(())
 }
 
-pub fn load_cog(path: &str) -> Result<()> {
+pub fn load_cog(_path: &str) -> Result<()> {
     // ... implementation ...
     Ok(())
 }
 
-pub fn load_pdf(path: &str) -> Result<()> {
+pub fn load_pdf(_path: &str) -> Result<()> {
     // ... implementation ...
     Ok(())
 }

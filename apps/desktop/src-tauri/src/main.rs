@@ -160,6 +160,23 @@ fn residuals_by_id_affine(t: &types::Affine, constraints: &[ConstraintKind]) -> 
 }
 
 #[tauri::command]
+fn get_proj_string(method: String, state: State<AppState>) -> Result<String, String> {
+    let list = state.constraints.lock().map_err(|e| e.to_string())?;
+    let pairs = solver::pairs_from_constraints(&list);
+    match method.as_str() {
+        "similarity" => {
+            let t = solver::fit_similarity_from_pairs(&pairs).map_err(|e| e.to_string())?;
+            Ok(solver::similarity_to_proj(&t))
+        }
+        "affine" => {
+            let t = solver::fit_affine_from_pairs(&pairs).map_err(|e| e.to_string())?;
+            Ok(solver::affine_to_proj(&t))
+        }
+        _ => Err(format!("unknown method {}", method)),
+    }
+}
+
+#[tauri::command]
 fn export_world_file(path_without_ext: String, method: String, state: State<AppState>) -> Result<(), String> {
     let list = state.constraints.lock().map_err(|e| e.to_string())?;
     let pairs = solver::pairs_from_constraints(&list);
@@ -203,7 +220,11 @@ fn export_georeferenced_geotiff(state: State<AppState>, method: String, output_w
         _ => return Err("unknown method".into()),
     };
     let ref_path = state.reference_path.lock().map_err(|e| e.to_string())?.clone().ok_or_else(|| "reference path not set".to_string())?;
-    let ref_base = ref_path.replace(/\.[^.]+$/, "");
+    // Strip extension from reference path
+    let ref_base = std::path::Path::new(&ref_path)
+        .with_extension("")
+        .to_string_lossy()
+        .into_owned();
     // Try reading reference world file
     let ref_aff = match io::read_world_file(&ref_base) {
         Ok(a) => a,
@@ -238,6 +259,7 @@ fn main() {
             add_constraint,
             delete_constraint,
             solve_global,
+            get_proj_string,
             export_world_file,
         ])
         .run(tauri::generate_context!())
