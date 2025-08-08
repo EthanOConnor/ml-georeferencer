@@ -48,6 +48,8 @@ workload and ensure the WebView2 runtime is present. Then install pnpm:
 npm install -g pnpm
 ```
 
+Minimum Node version for the desktop UI (Vite 5): Node 18+
+
 ### Launch (Dev)
 
 ```bash
