@@ -16,6 +16,10 @@ function App() {
   const [errorUnit, setErrorUnit] = useState<'pixels' | 'meters' | 'mapmm'>('pixels');
   const [mapScale, setMapScale] = useState<number | null>(null);
   const [referenceGeoref, setReferenceGeoref] = useState<{ affine: number[]; wkt: string | null } | null>(null);
+  const [coordFormat, setCoordFormat] = useState<'pixels' | 'lonlat' | 'local_m' | 'utm'>('pixels');
+  const [formattedPairs, setFormattedPairs] = useState<Record<number, { src: string; dst: string }>>({});
+  const [datumPolicy, setDatumPolicy] = useState<'WGS84' | 'NAD83_2011'>('WGS84');
+  const [cursorCoords, setCursorCoords] = useState<string>('');
 
   async function pickMap() {
     const path = await open({ multiple: false, filters: [{ name: 'TIFF', extensions: ['tif', 'tiff'] }] });
@@ -36,20 +40,60 @@ function App() {
     }
   }
 
+  const [suggestedCrs, setSuggestedCrs] = useState<any | null>(null);
+  const [refMetersPerPixel, setRefMetersPerPixel] = useState<number | null>(null);
+
   useEffect(() => {
     async function fetchGeoref() {
       if (refPath) {
         try {
           const geo = await invoke('get_reference_georef');
           setReferenceGeoref(geo as { affine: number[]; wkt: string | null } | null);
+          const crs = await invoke('suggest_output_epsg', { policy: datumPolicy });
+          setSuggestedCrs(crs);
+          const mpp = await invoke('metric_scale_at', { u: 0, v: 0 });
+          setRefMetersPerPixel((mpp as any)?.mpp || null);
         } catch (error) {
           console.error("Error fetching georeference:", error);
           setReferenceGeoref(null);
+          setSuggestedCrs(null);
         }
       }
     }
     fetchGeoref();
-  }, [refPath]);
+  }, [refPath, datumPolicy]);
+
+  useEffect(() => {
+    // recompute formatted pairs on coordFormat/constraints changes
+    async function recompute() {
+      const out: Record<number, { src: string; dst: string }> = {};
+      for (const c of constraints) {
+        if (coordFormat === 'pixels') {
+          out[c.id] = { src: `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`, dst: `${c.dst[0].toFixed(1)}, ${c.dst[1].toFixed(1)}` };
+        } else {
+          try {
+            let conv: any;
+            if (coordFormat === 'utm') {
+              conv = await invoke('pixel_to_projected', { policy: datumPolicy, u: c.dst[0], v: c.dst[1] });
+            } else {
+              conv = await invoke('pixel_to', { u: c.dst[0], v: c.dst[1], mode: coordFormat });
+            }
+            const a = conv as [number, number] | null;
+            if (a) {
+              const fmt = coordFormat === 'lonlat' ? `${a[0].toFixed(6)}, ${a[1].toFixed(6)}` : `${a[0].toFixed(2)}, ${a[1].toFixed(2)}`;
+              out[c.id] = { src: `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`, dst: fmt };
+            } else {
+              out[c.id] = { src: `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`, dst: 'n/a' };
+            }
+          } catch (e) {
+            out[c.id] = { src: `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`, dst: 'n/a' };
+          }
+        }
+      }
+      setFormattedPairs(out);
+    }
+    recompute();
+  }, [coordFormat, constraints, datumPolicy]);
 
   async function addPair(src: [number, number], dst: [number, number]) {
     const c = {
@@ -108,8 +152,13 @@ function App() {
     <div className="container">
       <div className="canvas-container">
         <Canvas
-          imageData={mapImg || undefined}
+          imageData={mapImg}
           overlayTransform={solution?.t || null}
+          showCrosshair
+          onMouseMove={async (x, y) => {
+            const coords = await invoke('pixel_to', { u: x, v: y, mode: 'pixel' });
+            setCursorCoords(coords ? `${(coords as any).x.toFixed(2)}, ${(coords as any).y.toFixed(2)}` : '');
+          }}
           onClickImage={(x, y) => {
             if (pendingSrc) {
               addPair(pendingSrc, [x, y]);
@@ -125,6 +174,12 @@ function App() {
         />
         <Canvas
           imageData={refImg || undefined}
+          metersPerPixel={refMetersPerPixel || 0}
+          showCrosshair
+          onMouseMove={async (x, y) => {
+            const coords = await invoke('pixel_to', { u: x, v: y, mode: coordFormat });
+            setCursorCoords(coords ? `${(coords as any).x.toFixed(2)}, ${(coords as any).y.toFixed(2)}` : '');
+          }}
           onClickImage={(x, y) => {
             if (pendingSrc) {
               addPair(pendingSrc, [x, y]);
@@ -168,6 +223,22 @@ function App() {
           </label>
         </div>
         <div style={{ marginBottom: 8 }}>
+          <label htmlFor="coordFormat">Coordinate format:</label>{' '}
+          <select id="coordFormat" value={coordFormat} onChange={(e) => setCoordFormat(e.target.value as any)}>
+            <option value="pixels">Pixels</option>
+            <option value="lonlat">Lon/Lat (deg)</option>
+            <option value="local_m">Local meters (AEQD)</option>
+            <option value="utm">Projected meters (UTM)</option>
+          </select>
+        </div>
+        <div style={{ marginBottom: 8 }}>
+          <label htmlFor="datumPolicy">Output CRS Policy:</label>
+          <select id="datumPolicy" value={datumPolicy} onChange={(e) => setDatumPolicy(e.target.value as any)}>
+            <option value="WGS84">WGS 84</option>
+            <option value="NAD83_2011">NAD83(2011)</option>
+          </select>
+        </div>
+        <div style={{ marginBottom: 8 }}>
           <strong>Status: </strong>
           {constraints.length < 2 && 'Add ≥2 pairs for similarity'}
           {constraints.length >= 2 && constraints.length < 3 && 'Add ≥3 for affine'}
@@ -182,8 +253,8 @@ function App() {
           <div style={{ marginBottom: 8 }}>
             <h3>Reference Georeferencing</h3>
             <p>Affine: [{referenceGeoref.affine.map(a => a.toFixed(3)).join(', ')}]</p>
-            <p>Pixel Scale: {((Math.abs(referenceGeoref.affine[0]) + Math.abs(referenceGeoref.affine[3])) / 2).toFixed(3)} units/pixel</p>
-            {referenceGeoref.wkt && <p>WKT: {referenceGeoref.wkt}</p>}
+            {suggestedCrs && <p>Suggested output CRS: {suggestedCrs.name}</p>}
+            {referenceGeoref.wkt && <p>CRS (PRJ): {referenceGeoref.wkt.substring(0, 120)}{referenceGeoref.wkt.length > 120 ? '…' : ''}</p>}
           </div>
         )}
         {residuals.length > 0 && (
@@ -199,9 +270,13 @@ function App() {
         <h3>Pairs ({constraints.length})</h3>
         <ol style={{ maxHeight: 200, overflow: 'auto' }}>
           {constraints.map((c) => (
-            <li key={c.id}>src {c.src.map((v) => v.toFixed(1)).join(', ')} → dst {c.dst.map((v) => v.toFixed(1)).join(', ')}</li>
+            <li key={c.id}>src {formattedPairs[c.id]?.src || `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`} → dst {formattedPairs[c.id]?.dst || `${c.dst[0].toFixed(1)}, ${c.dst[1].toFixed(1)}`}</li>
           ))}
         </ol>
+      </div>
+      <div className="status-bar">
+        {referenceGeoref?.wkt ? `Ref CRS: ${referenceGeoref.wkt.substring(0, 60)}...` : 'No Ref CRS'}
+        <span style={{ marginLeft: 'auto' }}>{cursorCoords}</span>
       </div>
     </div>
   );

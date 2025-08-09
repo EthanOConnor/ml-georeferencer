@@ -3,8 +3,8 @@
 This doc defines the **manual georeferencer** and the **ML assist** that proposes alignment.
 
 ## 1. Inputs
-- Map: `.omap`/`.omapx`/OCAD/PDF (vector or raster)
-- References: MBTiles/COG, DEM/DSM/LiDAR hillshade/slope, GPX/FIT, GIS vectors
+- Map: `.omap`/`.omapx`/OCAD/PDF/GeoTIFF/PNG (vector or raster)
+- References: GeoTIFF, MBTiles/COG, DEM/DSM/LiDAR hillshade/slope, GPX/FIT, GIS vectors
 - CRS: project CRS (PROJ); all inputs reprojected on the fly
 
 ## 2. Transform Model

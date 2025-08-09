@@ -6,7 +6,7 @@ A **local‑first**, cross‑platform georeferencing tool for orienteering maps 
 GPX/FIT tracks, GIS layers) and outputs a **transform stack** (global + local) plus a **quality
 report**. Every session becomes high‑quality training data for the ML model.
 
-> Status: **spec-first repo** (v2025-08-07). Use this as the blueprint to scaffold code.
+> Status: **spec-first repo** (v2025-08-07). This is a working blueprint with partial scaffolding; several backend functions are intentionally stubbed or pending (see MEMO.md for gaps).
 
 ## Highlights
 - Ultrafast manual UX: realtime preview while dragging control points, residual heatmaps.
@@ -48,7 +48,7 @@ workload and ensure the WebView2 runtime is present. Then install pnpm:
 npm install -g pnpm
 ```
 
-Minimum Node version for the desktop UI (Vite 5): Node 18+
+Minimum Node version for the desktop UI (Vite 7): Node 22+. The repo provides `.nvmrc` with `24` and root `package.json` engines (`>=22.12 <25`). Use Node 24 for best compatibility.
 
 ### Launch (Dev)
 
@@ -66,7 +66,7 @@ toggle the "Global only" solver and view residuals.
 This repo is a Rust + Node monorepo. Use pnpm for JS and Cargo for Rust.
 
 - Install deps (root):
-  - `pnpm install`
+  - `pnpm install` (respects the pnpm workspace)
 - Build Rust crates:
   - `cargo build --all-targets`
 - Type-check frontend:
@@ -83,5 +83,7 @@ Shortcuts with just:
 - `just build-all` – Build Rust crates and desktop bundle
 
 Notes:
-- Tauri v2 capabilities are minimized to `core` and `dialog` for least privilege.
+- Rust toolchain pinned to 1.89 via `rust-toolchain.toml` (CI matches).
+- Tauri v2 capabilities are minimized to `core` and `dialog` for least privilege; filesystem access is via backend Rust code.
 - The bundle identifier is `com.mlgeoreferencer.desktop` (no `.app` suffix to avoid macOS conflicts).
+- The desktop shell compiles once pending backend APIs in `solver` are implemented (see MEMO.md).

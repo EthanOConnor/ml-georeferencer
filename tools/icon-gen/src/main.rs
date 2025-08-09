@@ -62,7 +62,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let out = std::path::Path::new("apps/desktop/src-tauri/icons/mlg-icon.png");
-    if let Some(dir) = out.parent() { std::fs::create_dir_all(dir)?; }
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     img.save(out)?;
     println!("Wrote {}", out.display());
     Ok(())

@@ -1,60 +1,58 @@
 # Frontend-Backend API Contract
 
-This document defines the Tauri command-based API for communication between the React frontend and the Rust backend.
+This document defines the Tauri command-based API between the React frontend and the Rust backend.
 
 ## 1. Conventions
 
-- **Commands**: All backend functions are invoked via `invoke('command_name', { args })`.
-- **Responses**: Successful invocations return `Promise<T>`. Errors return `Promise<never>` with a descriptive error message string.
-- **Data Types**: All data structures (e.g., `ConstraintKind`, `TransformStack`) match the definitions in the `types` crate and are serialized as JSON.
+- Commands are invoked via `invoke('command_name', args)`.
+- Success returns `Promise<T>`; errors reject with a string message.
+- Data types mirror the `types` crate (serialized via JSON): `ConstraintKind`, `TransformStack`, `QualityMetrics`, etc.
+- Pixel coordinates: pixel centers are at integer coordinates; no implicit 0.5 offset is applied inside solver/export transforms.
+- CRS normalization: when converting geographic CRSs, longitudes map to x and latitudes to y before projecting to any local plane to avoid axis-order ambiguity.
 
-## 2. Commands
+## 2. Implemented Commands (current)
 
-### `load_project`
+These commands are implemented in `apps/desktop/src-tauri/src/main.rs`:
 
-Loads project metadata, including paths to map and reference files.
+- `set_map_path(path: string) -> void`
+  - Set the current map image path. Stored in state only.
 
-- **Request**: `{ path: string }`
-- **Response**: `ProjectMetadata` (A new struct to be defined in `types`)
+- `set_reference_path(path: string) -> void`
+  - Set the reference image path. Also attempts to read reference georeferencing (world file and optional PRJ).
 
-### `get_constraints`
+- `load_raster_data(path: string) -> string`
+  - Load a raster file and return a `data:image/png;base64,...` URI for UI rendering.
 
-Retrieves the current list of constraints.
+- `get_constraints() -> ConstraintKind[]`
+  - Return the in-memory list of constraints.
 
-- **Request**: `null`
-- **Response**: `ConstraintKind[]`
+- `add_constraint(c: ConstraintKind) -> ConstraintKind[]`
+  - Append a constraint and return the updated list. If a reference georeference is set, enriches point-pairs with derived `dst_real` and `dst_local`.
 
-### `add_constraint`
+- `delete_constraint(id: number) -> ConstraintKind[]`
+  - Remove a constraint by ID and return the updated list.
 
-Adds a new constraint and returns the updated list.
+- `solve_global(method: 'similarity' | 'affine', errorUnit: 'pixels' | 'meters' | 'mapmm', mapScale?: number) -> [TransformStack, QualityMetrics]`
+  - Fit a global transform using current constraints. Returns a one-element `TransformStack` and quality metrics including per-constraint residuals.
 
-- **Request**: `ConstraintKind`
-- **Response**: `ConstraintKind[]`
+- `get_proj_string(method: 'similarity' | 'affine') -> string`
+  - Return a PROJ pipeline string for the fitted transform.
 
-### `update_constraint`
+- `export_world_file(pathWithoutExt: string, method: 'similarity' | 'affine') -> void`
+  - Write an ESRI world file (`.tfw`) next to the given base path using the fitted transform.
 
-Updates an existing constraint.
+- `export_georeferenced_geotiff(method: 'similarity' | 'affine', outputWithoutExt: string) -> void`
+  - Compose the map->ref transform with the reference world transform and write a new world file and a default PRJ next to `outputWithoutExt`.
 
-- **Request**: `ConstraintKind`
-- **Response**: `ConstraintKind[]`
+- `get_reference_georef() -> Georef | null`
+  - Return the loaded reference georeference (affine + optional WKT), if available.
 
-### `delete_constraint`
+## 3. Planned Commands (spec)
 
-Deletes a constraint by its ID.
+The following are in the spec but not yet implemented. Treat as roadmap:
 
-- **Request**: `{ id: u64 }`
-- **Response**: `ConstraintKind[]`
+- `load_project(path: string) -> ProjectMetadata`
+- `update_constraint(c: ConstraintKind) -> ConstraintKind[]`
+- `solve_local(params...) -> [TransformStack, QualityMetrics]`
 
-### `solve_global`
-
-Performs a global solve (Similarity/Affine) based on the current constraints.
-
-- **Request**: `null`
-- **Response**: `{ transform: TransformStack, metrics: QualityMetrics }`
-
-### `solve_local`
-
-Performs a local warp (TPS/FFD) solve.
-
-- **Request**: `{ lambda: f64 }` (or other regularization params)
-- **Response**: `{ transform: TransformStack, metrics: QualityMetrics }`
+Refer to MEMO.md for pending backend functions that block some of the above.

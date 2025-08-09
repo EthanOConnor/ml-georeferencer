@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use nalgebra::{Matrix2, SVD, Vector2};
+use nalgebra::{Matrix2, Vector2, SVD};
 use rand::seq::SliceRandom;
 use types::{Affine, ConstraintKind, Similarity};
 
@@ -71,13 +71,17 @@ pub fn fit_similarity_from_pairs(pairs: &[([f64; 2], [f64; 2])]) -> Result<Simil
     let s = (c.transpose() * r).trace() / sum_centered_src_sq_norm;
     let t = dst_centroid - s * r * src_centroid;
     let theta = r.m21.atan2(r.m11);
-    Ok(Similarity { params: [s, theta, t[0], t[1]] })
+    Ok(Similarity {
+        params: [s, theta, t[0], t[1]],
+    })
 }
 
 pub fn fit_affine_from_pairs(pairs: &[([f64; 2], [f64; 2])]) -> Result<Affine> {
     let n = pairs.len();
     if n < 3 {
-        return Err(anyhow!("At least 3 pairs are required to fit an affine transform."));
+        return Err(anyhow!(
+            "At least 3 pairs are required to fit an affine transform."
+        ));
     }
     let mut a = nalgebra::DMatrix::<f64>::zeros(2 * n, 6);
     let mut b = nalgebra::DVector::<f64>::zeros(2 * n);
@@ -95,7 +99,9 @@ pub fn fit_affine_from_pairs(pairs: &[([f64; 2], [f64; 2])]) -> Result<Affine> {
     }
     let decomp = a.svd(true, true);
     let x = decomp.solve(&b, 1e-6).map_err(|e| anyhow!(e.to_string()))?;
-    Ok(Affine { params: [x[0], x[1], x[2], x[3], x[4], x[5]] })
+    Ok(Affine {
+        params: [x[0], x[1], x[2], x[3], x[4], x[5]],
+    })
 }
 
 pub fn ransac_fit_similarity(
@@ -110,13 +116,17 @@ pub fn ransac_fit_similarity(
         return Err(anyhow!("RANSAC threshold must be positive and finite"));
     }
     let mut best_inliers = 0usize;
-    let mut best_transform = Similarity { params: [1.0, 0.0, 0.0, 0.0] };
+    let mut best_transform = Similarity {
+        params: [1.0, 0.0, 0.0, 0.0],
+    };
     for _ in 0..max_iters {
         let sample: Vec<_> = pairs
             .choose_multiple(&mut rand::thread_rng(), 2)
             .cloned()
             .collect();
-        if sample.len() < 2 { continue; }
+        if sample.len() < 2 {
+            continue;
+        }
         if let Ok(transform) = fit_similarity_from_pairs(&sample) {
             let mut inliers = 0;
             for (src, dst) in pairs {
@@ -145,93 +155,113 @@ pub fn ransac_fit_similarity(
             }
         }
     }
-    if best_inliers == 0 { return Err(anyhow!("RANSAC failed to find a model")); }
+    if best_inliers == 0 {
+        return Err(anyhow!("RANSAC failed to find a model"));
+    }
     Ok(best_transform)
 }
 
+/// Extract point-pair constraints as (src, dst) pixel-space pairs.
+/// G1 behavior: only PointPair constraints are considered. We drop any pairs
+/// with NaNs/Infs, duplicates (exact equality on all four coordinates), and
+/// degenerate pairs where src == dst within 1e-12 in L2 norm.
 pub fn pairs_from_constraints(constraints: &[ConstraintKind]) -> Vec<([f64; 2], [f64; 2])> {
-    constraints
-        .iter()
-        .filter_map(|c| match c {
-            ConstraintKind::PointPair { src, dst, .. } => Some((*src, *dst)),
-            _ => None,
-        })
-        .collect()
+    let mut out: Vec<([f64; 2], [f64; 2])> = Vec::new();
+    for c in constraints {
+        if let ConstraintKind::PointPair { src, dst, .. } = c {
+            let [sx, sy] = *src;
+            let [dx, dy] = *dst;
+            if !(sx.is_finite() && sy.is_finite() && dx.is_finite() && dy.is_finite()) {
+                continue;
+            }
+            let dsq = (sx - dx) * (sx - dx) + (sy - dy) * (sy - dy);
+            if dsq <= 1e-24 {
+                // |src-dst| <= 1e-12
+                continue;
+            }
+            let pair = (*src, *dst);
+            // exact duplicate filter
+            if out.iter().any(|p| p.0 == pair.0 && p.1 == pair.1) {
+                continue;
+            }
+            out.push(pair);
+        }
+    }
+    out
 }
 
-/// Invert a similarity transform.
-pub fn invert_similarity(t: &Similarity) -> Similarity {
-    let s = t.params[0];
-    let theta = t.params[1];
-    let tx = t.params[2];
-    let ty = t.params[3];
-    let inv_s = 1.0 / s;
-    let inv_theta = -theta;
-    let c = inv_theta.cos();
-    let si = inv_theta.sin();
-    let inv_tx = -inv_s * (c * tx - si * ty);
-    let inv_ty = -inv_s * (si * tx + c * ty);
-    Similarity { params: [inv_s, inv_theta, inv_tx, inv_ty] }
-}
-
-/// Compose two similarity transforms (a followed by b).
-pub fn compose_similarity(a: &Similarity, b: &Similarity) -> Similarity {
-    let (sa, ta, txa, tya) = (a.params[0], a.params[1], a.params[2], a.params[3]);
-    let (sb, tb, txb, tyb) = (b.params[0], b.params[1], b.params[2], b.params[3]);
-    let ca = ta.cos();
-    let sa_sin = ta.sin();
-    let s = sa * sb;
-    let theta = ta + tb;
-    let tx = sa * (ca * txb - sa_sin * tyb) + txa;
-    let ty = sa * (sa_sin * txb + ca * tyb) + tya;
-    Similarity { params: [s, theta, tx, ty] }
-}
-
-/// Convert similarity to a PROJ pipeline string.
-pub fn similarity_to_proj(t: &Similarity) -> String {
-    let s = t.params[0];
-    let th = t.params[1];
-    let (c, si) = (th.cos(), th.sin());
+/// Return PROJ pipeline string for a similarity transform.
+/// Mapping uses pixel centers at integer coordinates (no implicit 0.5 offset):
+/// x = a*u + b*v + c; y = d*u + e*v + f
+pub fn similarity_to_proj(sim: &Similarity) -> String {
+    let s = sim.params[0];
+    let th = sim.params[1];
+    let tx = sim.params[2];
+    let ty = sim.params[3];
+    let c = th.cos();
+    let si = th.sin();
     let a = s * c;
     let b = -s * si;
     let d = s * si;
     let e = s * c;
-    let tx = t.params[2];
-    let ty = t.params[3];
-    format!("+proj=pipeline +step +proj=affine +s11={a} +s12={b} +s21={d} +s22={e} +xoff={tx} +yoff={ty}")
+    format!(
+        "+proj=pipeline +step +proj=affine +xoff={:.17} +yoff={:.17} +s11={:.17} +s12={:.17} +s21={:.17} +s22={:.17}",
+        tx, ty, a, b, d, e
+    )
 }
 
-/// Invert an affine transform. Returns None if not invertible.
-pub fn invert_affine(t: &Affine) -> Option<Affine> {
-    let [a, b, c, d, tx, ty] = t.params;
-    let det = a * d - b * c;
-    if det.abs() < f64::EPSILON {
-        return None;
+/// Return PROJ pipeline string for an affine transform.
+/// Affine params: [a,b,c,d,tx,ty] where
+/// x = a*u + b*v + tx; y = c*u + d*v + ty
+pub fn affine_to_proj(aff: &Affine) -> String {
+    let a = aff.params[0];
+    let b = aff.params[1];
+    let c = aff.params[2];
+    let d = aff.params[3];
+    let tx = aff.params[4];
+    let ty = aff.params[5];
+    format!(
+        "+proj=pipeline +step +proj=affine +xoff={:.17} +yoff={:.17} +s11={:.17} +s12={:.17} +s21={:.17} +s22={:.17}",
+        tx, ty, a, b, c, d
+    )
+}
+
+/// Return the inverse of a similarity transform.
+pub fn invert_similarity(sim: &Similarity) -> Similarity {
+    let s = sim.params[0];
+    let th = sim.params[1];
+    let tx = sim.params[2];
+    let ty = sim.params[3];
+    let c = th.cos();
+    let si = th.sin();
+    let r_t = Matrix2::new(c, si, -si, c); // R^T
+    let inv_s = 1.0_f64 / s;
+    let t = Vector2::new(tx, ty);
+    let t_inv = -inv_s * (r_t * t);
+    Similarity {
+        params: [inv_s, -th, t_inv.x, t_inv.y],
     }
-    let inv_a = d / det;
-    let inv_b = -b / det;
-    let inv_c = -c / det;
-    let inv_d = a / det;
-    let inv_tx = -(inv_a * tx + inv_b * ty);
-    let inv_ty = -(inv_c * tx + inv_d * ty);
-    Some(Affine { params: [inv_a, inv_b, inv_c, inv_d, inv_tx, inv_ty] })
 }
 
-/// Compose two affine transforms (a followed by b).
-pub fn compose_affine(a: &Affine, b: &Affine) -> Affine {
-    let [a1, b1, c1, d1, tx1, ty1] = a.params;
-    let [a2, b2, c2, d2, tx2, ty2] = b.params;
-    let a_ = a2 * a1 + b2 * c1;
-    let b_ = a2 * b1 + b2 * d1;
-    let c_ = c2 * a1 + d2 * c1;
-    let d_ = c2 * b1 + d2 * d1;
-    let tx_ = a2 * tx1 + b2 * ty1 + tx2;
-    let ty_ = c2 * tx1 + d2 * ty1 + ty2;
-    Affine { params: [a_, b_, c_, d_, tx_, ty_] }
-}
+/// Compose two similarity transforms: result = b ∘ a
+pub fn compose_similarity(a: &Similarity, b: &Similarity) -> Similarity {
+    let s1 = a.params[0];
+    let th1 = a.params[1];
+    let t1 = Vector2::new(a.params[2], a.params[3]);
+    let r1 = Matrix2::new(th1.cos(), -th1.sin(), th1.sin(), th1.cos());
 
-/// Convert an affine transform to a PROJ pipeline string.
-pub fn affine_to_proj(t: &Affine) -> String {
-    let [a, b, c, d, tx, ty] = t.params;
-    format!("+proj=pipeline +step +proj=affine +s11={a} +s12={b} +s21={c} +s22={d} +xoff={tx} +yoff={ty}")
+    let s2 = b.params[0];
+    let th2 = b.params[1];
+    let t2 = Vector2::new(b.params[2], b.params[3]);
+    let r2 = Matrix2::new(th2.cos(), -th2.sin(), th2.sin(), th2.cos());
+
+    let s = s2 * s1;
+    let r = r2 * r1;
+    let t = s2 * (r2 * t1) + t2;
+
+    // Recover angle from rotation matrix
+    let theta = r[(1, 0)].atan2(r[(0, 0)]);
+    Similarity {
+        params: [s, theta, t.x, t.y],
+    }
 }

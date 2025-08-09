@@ -59,8 +59,16 @@ pub fn load_raster(path: &str) -> Result<String> {
     let img = image::open(path)?;
     let mut buffer = Cursor::new(Vec::new());
     img.write_to(&mut buffer, ImageFormat::Png)?;
-    let data_uri = format!("data:image/png;base64,{}", BASE64.encode(buffer.into_inner()));
+    let data_uri = format!(
+        "data:image/png;base64,{}",
+        BASE64.encode(buffer.into_inner())
+    );
     Ok(data_uri)
+}
+
+pub fn image_dimensions(path: &str) -> Result<(u32, u32)> {
+    let img = image::image_dimensions(path)?;
+    Ok(img)
 }
 
 pub fn load_mbtiles(_path: &str) -> Result<()> {

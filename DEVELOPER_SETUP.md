@@ -1,14 +1,13 @@
 # Developer Setup
 
-This project is **Rust-first**, with optional UI shells later. We pin toolchains for
-determinism and easy onboarding.
+This project is **Rust-first**, with a Tauri desktop UI. Toolchains are pinned for determinism and easy onboarding.
 
 ## Prereqs
-- **Rustup** (stable) with components: `rustfmt`, `clippy`
-- **Node.js** (via Corepack) for future desktop shell; **pnpm** enabled (`corepack enable`)
+- **Rustup** with toolchain 1.89 (pinned in `rust-toolchain.toml`), components: `rustfmt`, `clippy`
+- **Node.js** 22–24 (use `.nvmrc` → 24) with **pnpm** via Corepack (`corepack enable`)
 - **Python 3.11+** (optional) for data tooling
-- **Git LFS** *not required* (models are fetched by script)
-- **CMake** (onnxruntime builds on Windows/macOS; optional for now)
+- **Git LFS** not required (models are fetched by script)
+- **CMake** (optional; needed if enabling ONNX backends later)
 
 ## One-time
 ```bash
@@ -30,13 +29,13 @@ just spec       # open spec files
 ```
 
 ## Toolchain pinning
-- `rust-toolchain.toml` pins Rust channel & components.
-- Node version is controlled by `packageManager` + `engines` (future UI package).
-- CI enforces the same versions across macOS/Windows/Linux.
+- `rust-toolchain.toml` pins Rust channel (1.89) & components.
+- Node version is controlled by root `package.json` `engines` and `.nvmrc`.
+- CI enforces Node 22/24 and Rust 1.89 across macOS/Windows/Linux.
 
 ---
 ### Git Initialization Behavior
-The `scripts/bootstrap.sh` script now automatically initializes a Git repository if one is not already present.
+The `scripts/bootstrap.sh` script initializes a Git repository if one is not already present.
 It will:
 1. Run `git init`
 2. Stage all files
@@ -48,3 +47,12 @@ It will:
 git init && git add . && git commit -m "Initial commit"
 ```
 Then execute `scripts/bootstrap.sh`.
+
+## Desktop (Tauri) dev
+```bash
+cd apps/desktop
+pnpm install
+pnpm tauri:dev
+```
+
+Note: The desktop app depends on backend functions in `crates/solver`. Some APIs are stubbed or pending; see MEMO.md before attempting full workflows.

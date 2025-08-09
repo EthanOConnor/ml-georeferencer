@@ -9,5 +9,8 @@ struct Args {
 
 fn main() {
     let _args = Args::parse();
-    println!("ML-Assisted Georeferencer CLI v{}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "ML-Assisted Georeferencer CLI v{}",
+        env!("CARGO_PKG_VERSION")
+    );
 }

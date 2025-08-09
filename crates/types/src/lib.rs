@@ -2,7 +2,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ConstraintKind {
-    Point { id: u64, point: [f64; 2], weight: f64 },
+    Point {
+        id: u64,
+        point: [f64; 2],
+        weight: f64,
+    },
     PointPair {
         id: u64,
         src: [f64; 2],
@@ -13,10 +17,27 @@ pub enum ConstraintKind {
         dst_local: Option<[f64; 2]>,
         weight: f64,
     },
-    Polyline { id: u64, points: Vec<[f64; 2]>, weight: f64 },
-    Polygon { id: u64, points: Vec<[f64; 2]>, weight: f64 },
-    AnisotropicPin { id: u64, point: [f64; 2], sigma_major: f64, sigma_minor: f64, angle: f64 },
-    Anchor { id: u64, point: [f64; 2] },
+    Polyline {
+        id: u64,
+        points: Vec<[f64; 2]>,
+        weight: f64,
+    },
+    Polygon {
+        id: u64,
+        points: Vec<[f64; 2]>,
+        weight: f64,
+    },
+    AnisotropicPin {
+        id: u64,
+        point: [f64; 2],
+        sigma_major: f64,
+        sigma_minor: f64,
+        angle: f64,
+    },
+    Anchor {
+        id: u64,
+        point: [f64; 2],
+    },
 }
 
 /// Units for reporting positional error metrics
@@ -36,12 +57,9 @@ pub enum TransformKind {
     Ffd(Ffd),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct TransformStack {
     pub transforms: Vec<TransformKind>,
-}
-impl Default for TransformStack {
-    fn default() -> Self { Self { transforms: Vec::new() } }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -72,15 +90,27 @@ impl Default for QualityMetrics {
 
 // Placeholder structs for transform kinds
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Similarity { pub params: [f64; 4] } // s, r, tx, ty
+pub struct Similarity {
+    pub params: [f64; 4],
+} // s, r, tx, ty
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Affine { pub params: [f64; 6] }
+pub struct Affine {
+    pub params: [f64; 6],
+}
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Homography { pub params: [f64; 9] }
+pub struct Homography {
+    pub params: [f64; 9],
+}
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Tps { pub control_points: Vec<[f64; 2]>, pub lambda: f64 }
+pub struct Tps {
+    pub control_points: Vec<[f64; 2]>,
+    pub lambda: f64,
+}
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Ffd { pub control_points: Vec<[f64; 2]>, pub grid_size: [usize; 2] }
+pub struct Ffd {
+    pub control_points: Vec<[f64; 2]>,
+    pub grid_size: [usize; 2],
+}
 
 impl ConstraintKind {
     pub fn id(&self) -> u64 {
@@ -100,34 +130,41 @@ impl QualityMetrics {
     /// distance represented by a single reference pixel in meters. When
     /// converting to or from `MapMillimeters`, `map_scale` must be provided
     /// (denominator, e.g. 10000 for 1:10000).
-    pub fn convert_units(
-        &mut self,
-        pixel_size: f64,
-        map_scale: Option<f64>,
-        target: ErrorUnit,
-    ) {
+    pub fn convert_units(&mut self, pixel_size: f64, map_scale: Option<f64>, target: ErrorUnit) {
         let mut factor = 1.0;
         match (self.unit, target) {
             (ErrorUnit::Pixels, ErrorUnit::Meters) => factor = pixel_size,
             (ErrorUnit::Meters, ErrorUnit::Pixels) => factor = 1.0 / pixel_size,
             (ErrorUnit::Pixels, ErrorUnit::MapMillimeters) => {
-                if let Some(s) = map_scale { factor = pixel_size * (1000.0 / s); }
+                if let Some(s) = map_scale {
+                    factor = pixel_size * (1000.0 / s);
+                }
             }
             (ErrorUnit::MapMillimeters, ErrorUnit::Pixels) => {
-                if let Some(s) = map_scale { factor = (s / 1000.0) / pixel_size; }
+                if let Some(s) = map_scale {
+                    factor = (s / 1000.0) / pixel_size;
+                }
             }
             (ErrorUnit::Meters, ErrorUnit::MapMillimeters) => {
-                if let Some(s) = map_scale { factor = 1000.0 / s; }
+                if let Some(s) = map_scale {
+                    factor = 1000.0 / s;
+                }
             }
             (ErrorUnit::MapMillimeters, ErrorUnit::Meters) => {
-                if let Some(s) = map_scale { factor = s / 1000.0; }
+                if let Some(s) = map_scale {
+                    factor = s / 1000.0;
+                }
             }
             _ => {}
         }
         self.rmse *= factor;
         self.p90_error *= factor;
-        for r in &mut self.residuals { *r *= factor; }
-        for (_, r) in &mut self.residuals_by_id { *r *= factor; }
+        for r in &mut self.residuals {
+            *r *= factor;
+        }
+        for (_, r) in &mut self.residuals_by_id {
+            *r *= factor;
+        }
         self.unit = target;
         if target == ErrorUnit::MapMillimeters {
             self.map_scale = map_scale;
