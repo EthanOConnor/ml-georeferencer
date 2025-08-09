@@ -1,9 +1,16 @@
 {
-  "$schema": "https://schemas.tauri.app/v2/capabilities.schema.json",
+  "$schema": "https://schema.tauri.app/capabilities/2",
   "identifier": "dialog",
-  "description": "Allow opening dialogs for file selection.",
+  "description": "Allow showing native file/folder selection dialogs",
+  "windows": ["main"],
+  "webviews": ["main"],
+  "urls": [
+    "local://*",
+    "http://localhost:*",
+    "asset://*"
+  ],
   "permissions": [
-    "dialog:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "dialog:allow-save"
   ]
 }

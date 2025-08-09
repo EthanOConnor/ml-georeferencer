@@ -2,7 +2,8 @@
 
 use std::sync::Mutex;
 use tauri::State;
-use tauri_plugin_dialog::init as dialog_init;
+use tauri_plugin_dialog;
+
 use types::{ConstraintKind, ErrorUnit, QualityMetrics, TransformKind, TransformStack};
 
 #[derive(Default)]
