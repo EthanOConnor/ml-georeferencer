@@ -1,12 +1,12 @@
 # ML‑Assisted Map Georeferencer
 
-A **local‑first**, cross‑platform georeferencing tool for orienteering maps that pairs a
+A cross‑platform georeferencing tool for orienteering maps that pairs a
 **world‑class manual georeferencer** with **ML‑assisted alignment**. It consumes maps
-(`.omap`/`.omapx`/OCAD/PDF) and georeferenced references (orthophotos, COG/MBTiles, DEM/LiDAR,
+(`.omap`/`.omapx`/OCAD/PDF/Raster Formats) and georeferenced references (orthophotos, COG/MBTiles, DEM/LiDAR,
 GPX/FIT tracks, GIS layers) and outputs a **transform stack** (global + local) plus a **quality
 report**. Every session becomes high‑quality training data for the ML model.
 
-> Status: **spec-first repo** (v2025-08-07). This is a working blueprint with partial scaffolding; several backend functions are intentionally stubbed or pending (see MEMO.md for gaps).
+> Status: **spec-first repo** (v2025-08-07). This is a working blueprint with partial scaffolding; most backend functions are intentionally stubbed or pending (see MEMO.md for gaps) and the front end has just been started.
 
 ## Highlights
 - Ultrafast manual UX: realtime preview while dragging control points, residual heatmaps.
@@ -14,7 +14,6 @@ report**. Every session becomes high‑quality training data for the ML model.
 - Constraint types: points, lines, areas, directional/relational, “don’t warp” anchors.
 - ML assist: keypoint/graph coarse aligner → dense‑flow refinement → TPS/FFD distillation.
 - Outputs: PROJ pipelines where possible, VRT/TPS otherwise. Deterministic exports.
-- Local‑first storage; signed, append‑only operation logs ready for sync integration.
 
 See **docs/SPEC.md** and **docs/ROADMAP.md** for the complete specification and plan.
 
