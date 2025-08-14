@@ -6,9 +6,10 @@
     <title>ML Georeferencer</title>
     <style>
       html, body, #root { height: 100%; margin: 0; }
-      .container { display: flex; height: 100%; }
+      .container { display: flex; height: calc(100% - 28px); }
       .canvas-container { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: #111; }
       .side-panel { width: 320px; padding: 8px; border-left: 1px solid #333; color: #ddd; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      .status-bar { position: fixed; left: 0; right: 0; bottom: 0; height: 28px; background: #1a1a1a; border-top: 1px solid #333; color: #ddd; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; font-size: 12px; display: flex; align-items: center; padding: 0 8px; }
       button { margin-right: 6px; }
     </style>
   </head>

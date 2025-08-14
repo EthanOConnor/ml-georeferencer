@@ -9,24 +9,36 @@ export type OverlayTransform =
 type Props = {
   imageData?: string | null | undefined;
   overlayTransform?: OverlayTransform;
-  onClickImage?: (imgX: number, imgY: number) => void;
-  onMouseMove?: (imgX: number, imgY: number) => void;
+  onImageClick?: (imgX: number, imgY: number) => void;
+  onImageMouseMove?: (imgX: number, imgY: number) => void;
+  // When true, resets pan/zoom on each new image load
+  resetOnImageLoad?: boolean;
+  // Changing this number triggers a view reset (pan=0, zoom=1)
+  resetKey?: number;
   points?: { x: number; y: number; color?: string }[];
   metersPerPixel?: number; // image m per px at current view (approx)
   showCrosshair?: boolean;
+  canvasProps?: React.CanvasHTMLAttributes<HTMLCanvasElement>;
 };
 
-const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onClickImage, onMouseMove, points = [], metersPerPixel, showCrosshair = false, ...props }) => {
+const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, onImageMouseMove, resetOnImageLoad = true, resetKey, points = [], metersPerPixel, showCrosshair = false, canvasProps }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
   const [fitScale, setFitScale] = useState(1);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
-  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const dragging = useRef(false);
   const lastPos = useRef<{ x: number; y: number } | null>(null);
+  const panAccum = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
+  const panRaf = useRef(0);
+  const dragMoved = useRef(false);
+  const qualityRef = useRef<'low' | 'high'>('high');
+  const qualityIdleTimer = useRef<number>(0 as unknown as number);
+  const wheelAccumRef = useRef(1);
+  const wheelAnchorRef = useRef<{ x: number; y: number } | null>(null);
+  const wheelRaf = useRef(0);
 
   useEffect(() => {
     if (!imageData) { setImg(null); return; }
@@ -73,16 +85,29 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onClickImage, on
     return () => ro.disconnect();
   }, [img]);
 
-  // Reset view when a new image is loaded
+  // Reset view when a new image is loaded (opt-in)
   useEffect(() => {
     if (!img) return;
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-    log('view_reset_on_image', {});
+    if (resetOnImageLoad) {
+      zoomRef.current = 1;
+      panRef.current = { x: 0, y: 0 };
+      log('view_reset_on_image', {});
+      draw();
+    }
   }, [img?.src]);
 
-  // Drawing
+  // External reset trigger
   useEffect(() => {
+    if (resetKey === undefined) return;
+    zoomRef.current = 1;
+    panRef.current = { x: 0, y: 0 };
+    log('view_reset_by_key', { resetKey });
+    draw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetKey]);
+
+  // Drawing (on demand)
+  const draw = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const { width, height } = containerSize;
@@ -101,6 +126,8 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onClickImage, on
 
     if (!img) return;
 
+    const zoom = zoomRef.current;
+    const pan = panRef.current;
     const scale = fitScale * zoom;
     const drawW = img.width * scale;
     const drawH = img.height * scale;
@@ -118,7 +145,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onClickImage, on
     })();
 
     context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = 'high';
+    context.imageSmoothingQuality = qualityRef.current;
     context.drawImage(img, offX, offY, drawW, drawH);
 
     // points
@@ -157,55 +184,16 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onClickImage, on
       }
       context.restore();
     }
+  };
 
-    // crosshair and range rings
-    if (showCrosshair && cursor) {
-      const cx = cursor.x;
-      const cy = cursor.y;
-      const gap = 3;
-      context.save();
-      context.strokeStyle = 'rgba(255,255,255,0.9)';
-      context.lineWidth = 1;
-      context.beginPath();
-      context.moveTo(0, cy);
-      context.lineTo(cx - gap, cy);
-      context.moveTo(cx + gap, cy);
-      context.lineTo(width, cy);
-      context.stroke();
-      context.beginPath();
-      context.moveTo(cx, 0);
-      context.lineTo(cx, cy - gap);
-      context.moveTo(cx, cy + gap);
-      context.lineTo(cx, height);
-      context.stroke();
-      context.fillStyle = 'rgba(255,255,255,0.9)';
-      context.beginPath();
-      context.arc(cx, cy, 1, 0, Math.PI * 2);
-      context.fill();
-
-      if (metersPerPixel && scale > 0) {
-        const mpp_screen = metersPerPixel / scale;
-        const steps = niceRings(mpp_screen);
-        context.strokeStyle = 'rgba(255,255,255,0.6)';
-        context.fillStyle = 'rgba(255,255,255,0.6)';
-        context.font = '10px sans-serif';
-        for (const m of steps) {
-          const r = m / mpp_screen;
-          if (r < 8) continue;
-          context.beginPath();
-          context.arc(cx, cy, r, 0, Math.PI * 2);
-          context.stroke();
-          context.fillText(`${m.toFixed(0)}m`, cx + r * 0.707 + 4, cy - r * 0.707 - 4);
-        }
-      }
-      context.restore();
-    }
-  }, [img, points, overlayTransform, fitScale, zoom, pan, metersPerPixel, showCrosshair, cursor, containerSize]);
+  // Redraw when static inputs change
+  useEffect(() => { draw(); }, [img, points, overlayTransform, fitScale, containerSize]);
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     dragging.current = true;
     lastPos.current = { x: e.clientX, y: e.clientY };
+    dragMoved.current = false;
     log('pointer_down', { x: e.clientX, y: e.clientY });
   };
 
@@ -217,36 +205,47 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onClickImage, on
     const rect = parent.getBoundingClientRect();
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
-    setCursor({ x: sx, y: sy });
-    if (!dragging.current) {
-      // log cursor without spamming: every ~300ms
-      const now = performance.now();
-      const last = (window as any).__dbg_last_cursor_log || 0;
-      if (now - last > 300) {
-        (window as any).__dbg_last_cursor_log = now;
-        log('cursor_move', { sx: Math.round(sx), sy: Math.round(sy) });
-      }
-    }
 
-    if (img && onMouseMove) {
-      const scale = fitScale * zoom;
+    if (img && onImageMouseMove) {
+      const scale = fitScale * zoomRef.current;
       const { width, height } = containerSize;
       const drawW = img.width * scale;
       const drawH = img.height * scale;
-      const offX = (width - drawW) / 2 + pan.x;
-      const offY = (height - drawH) / 2 + pan.y;
+      const offX = (width - drawW) / 2 + panRef.current.x;
+      const offY = (height - drawH) / 2 + panRef.current.y;
       const ix = (sx - offX) / scale;
       const iy = (sy - offY) / scale;
       if (ix >= 0 && iy >= 0 && ix <= img.width && iy <= img.height) {
-        onMouseMove(ix, iy);
+        onImageMouseMove(ix, iy);
       }
     }
 
     if (!dragging.current || !lastPos.current) return;
     const dx = e.clientX - lastPos.current.x;
     const dy = e.clientY - lastPos.current.y;
+    if (Math.abs(dx) + Math.abs(dy) > 0) dragMoved.current = true;
     lastPos.current = { x: e.clientX, y: e.clientY };
-    setPan(p => { const np = { x: p.x + dx, y: p.y + dy }; log('pan_drag', { dx, dy, next: np }); return np; });
+    panAccum.current.dx += dx;
+    panAccum.current.dy += dy;
+    if (!panRaf.current) {
+      panRaf.current = requestAnimationFrame(() => {
+        const { dx, dy } = panAccum.current;
+        panAccum.current = { dx: 0, dy: 0 };
+        panRaf.current = 0;
+        if (dx !== 0 || dy !== 0) {
+          // lower quality during motion
+          qualityRef.current = 'low';
+          if (qualityIdleTimer.current) cancelAnimationFrame(qualityIdleTimer.current);
+          qualityIdleTimer.current = requestAnimationFrame(() => {
+            // after a frame idle, lift quality (will be set to high on next draw idle pass)
+            qualityRef.current = 'high';
+          });
+          panRef.current = { x: panRef.current.x + dx, y: panRef.current.y + dy };
+          log('pan_drag', { dx, dy, next: panRef.current });
+          draw();
+        }
+      });
+    }
   };
 
   const onPointerUp = () => {
@@ -261,43 +260,56 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onClickImage, on
     if (!img || !parent) return;
 
     const rect = parent.getBoundingClientRect();
-    const { width, height } = containerSize;
     const cursorPt = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    const oldZoom = zoom;
-    const newZoom = clamp(oldZoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1), 0.1, 20);
-    const oldScale = fitScale * oldZoom;
-    const newScale = fitScale * newZoom;
-
-    const drawW_old = img.width * oldScale;
-    const drawH_old = img.height * oldScale;
-    const offX_old = (width - drawW_old) / 2 + pan.x;
-    const offY_old = (height - drawH_old) / 2 + pan.y;
-    const imgX = (cursorPt.x - offX_old) / oldScale;
-    const imgY = (cursorPt.y - offY_old) / oldScale;
-
-    const drawW_new = img.width * newScale;
-    const drawH_new = img.height * newScale;
-    const offX_new_centered = (width - drawW_new) / 2;
-    const offY_new_centered = (height - drawH_new) / 2;
-    const newPanX = cursorPt.x - (offX_new_centered + imgX * newScale);
-    const newPanY = cursorPt.y - (offY_new_centered + imgY * newScale);
-    log('wheel_zoom', { deltaY: e.deltaY, oldZoom, newZoom, oldScale, newScale, imgX, imgY, newPanX: Math.round(newPanX), newPanY: Math.round(newPanY) });
-    setZoom(newZoom);
-    setPan({ x: newPanX, y: newPanY });
+    wheelAnchorRef.current = cursorPt;
+    // accumulate multiplicative factor
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    wheelAccumRef.current *= factor;
+    if (!wheelRaf.current) {
+      wheelRaf.current = requestAnimationFrame(() => {
+        const { width, height } = containerSize;
+        const oldZoom = zoomRef.current;
+        const accum = wheelAccumRef.current;
+        wheelAccumRef.current = 1;
+        wheelRaf.current = 0;
+        const newZoom = clamp(oldZoom * accum, 0.1, 20);
+        const oldScale = fitScale * oldZoom;
+        const newScale = fitScale * newZoom;
+        const anchor = wheelAnchorRef.current || { x: width / 2, y: height / 2 };
+        const drawW_old = img.width * oldScale;
+        const drawH_old = img.height * oldScale;
+        const offX_old = (width - drawW_old) / 2 + panRef.current.x;
+        const offY_old = (height - drawH_old) / 2 + panRef.current.y;
+        const imgX = (anchor.x - offX_old) / oldScale;
+        const imgY = (anchor.y - offY_old) / oldScale;
+        const drawW_new = img.width * newScale;
+        const drawH_new = img.height * newScale;
+        const offX_new_centered = (width - drawW_new) / 2;
+        const offY_new_centered = (height - drawH_new) / 2;
+        const newPanX = anchor.x - (offX_new_centered + imgX * newScale);
+        const newPanY = anchor.y - (offY_new_centered + imgY * newScale);
+        qualityRef.current = 'low';
+        zoomRef.current = newZoom;
+        panRef.current = { x: newPanX, y: newPanY };
+        draw();
+        // restore quality next frame
+        requestAnimationFrame(() => { qualityRef.current = 'high'; });
+      });
+    }
   };
 
   const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (lastPos.current) return; // Prevent click after pan
+    if (dragMoved.current) { dragMoved.current = false; return; }
     const canvas = canvasRef.current;
     const parent = containerRef.current;
-    if (!onClickImage || !img || !canvas || !parent) return;
+    if (!onImageClick || !img || !canvas || !parent) return;
 
     const { width, height } = containerSize;
-    const scale = fitScale * zoom;
+    const scale = fitScale * zoomRef.current;
     const drawW = img.width * scale;
     const drawH = img.height * scale;
-    const offX = (width - drawW) / 2 + pan.x;
-    const offY = (height - drawH) / 2 + pan.y;
+    const offX = (width - drawW) / 2 + panRef.current.x;
+    const offY = (height - drawH) / 2 + panRef.current.y;
 
     const rect = parent.getBoundingClientRect();
     const sx = e.clientX - rect.left;
@@ -305,7 +317,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onClickImage, on
     const ix = (sx - offX) / scale;
     const iy = (sy - offY) / scale;
     if (ix >= 0 && iy >= 0 && ix <= img.width && iy <= img.height) {
-      onClickImage(ix, iy);
+      onImageClick(ix, iy);
     }
   };
 
@@ -320,14 +332,14 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onClickImage, on
     >
       <canvas 
         ref={canvasRef} 
-        style={{ width: '100%', height: '100%', background: '#000', cursor: 'crosshair', touchAction: 'none' }} 
+        style={{ width: '100%', height: '100%', background: '#000', touchAction: 'none' }} 
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onWheel={handleWheel}
         onClick={handleClick}
-        {...props} 
+        {...canvasProps}
       />
     </div>
   );
@@ -352,12 +364,4 @@ function applyTransform(
 
 function clamp(v: number, a: number, b: number) { return Math.max(a, Math.min(b, v)); }
 
-function niceRings(mpp_screen: number): number[] {
-  if (mpp_screen <= 0) return [];
-  const target = 70 * mpp_screen;
-  const p = Math.pow(10, Math.floor(Math.log10(target)));
-  const bases = [1, 2, 5].map(b => b * p);
-  if (bases.length === 0) return [];
-  const step = bases.reduce((best, b) => Math.abs(b - target) < Math.abs(best - target) ? b : best, bases[0] || 1);
-  return [0.5, 1, 2.5, 5].map(k => k * step);
-}
+// crosshair/range rings removed for simplicity and performance

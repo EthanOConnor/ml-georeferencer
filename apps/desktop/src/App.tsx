@@ -24,6 +24,12 @@ function App() {
   const [datumPolicy, setDatumPolicy] = useState<'WGS84' | 'NAD83_2011'>('WGS84');
   const [cursorCoords, setCursorCoords] = useState<string>('');
   const coordUpdateRef = useRef(0);
+  // New UI/UX states
+  const [zoomToFitOnLoad, setZoomToFitOnLoad] = useState(true);
+  const [resetKeyMap, setResetKeyMap] = useState(0);
+  const [resetKeyRef, setResetKeyRef] = useState(0);
+  const [mapCursor, setMapCursor] = useState<string>('');
+  const [refCursor, setRefCursor] = useState<string>('');
   const rightMoveRAF = useRef(0);
   const rightLast = useRef<{ x: number; y: number } | null>(null);
   const [lastLogPath, setLastLogPath] = useState<string>('');
@@ -47,6 +53,27 @@ function App() {
         } else {
             setCursorCoords('');
         }
+    });
+  };
+
+  // rAF throttled cursor setters
+  const mapCursorRAF = useRef(0);
+  const refCursorRAF = useRef(0);
+  const updateMapCursor = (x: number, y: number) => {
+    cancelAnimationFrame(mapCursorRAF.current);
+    mapCursorRAF.current = requestAnimationFrame(() => {
+      setMapCursor(`${x.toFixed(2)}, ${y.toFixed(2)} px`);
+    });
+  };
+  const updateRefCursor = (coords: any) => {
+    cancelAnimationFrame(refCursorRAF.current);
+    refCursorRAF.current = requestAnimationFrame(() => {
+      if (!coords) { setRefCursor(''); return; }
+      const x = (coords as any).x ?? (Array.isArray(coords) ? coords[0] : undefined);
+      const y = (coords as any).y ?? (Array.isArray(coords) ? coords[1] : undefined);
+      if (x === undefined || y === undefined) { setRefCursor(''); return; }
+      if (coordFormat === 'lonlat') setRefCursor(`${x.toFixed(6)}, ${y.toFixed(6)}`);
+      else setRefCursor(`${x.toFixed(2)}, ${y.toFixed(2)}${coordFormat === 'utm' ? ' m' : ''}`);
     });
   };
 
@@ -201,11 +228,13 @@ function App() {
           imageData={mapImg}
           overlayTransform={solution?.t || null}
           showCrosshair
-          onMouseMove={(x, y) => {
-            // Local pixel mode: avoid Tauri bridge roundtrip for responsiveness
-            updateCursorCoords({ x, y });
+          resetOnImageLoad={zoomToFitOnLoad}
+          resetKey={resetKeyMap}
+          onImageMouseMove={(x, y) => {
+            updateMapCursor(x, y);
           }}
-          onClickImage={(x, y) => {
+          canvasProps={{ onContextMenu: (e) => { e.preventDefault(); if (pendingSrc) setPendingSrc(null); } }}
+          onImageClick={(x, y) => {
             if (pendingSrc) {
               addPair(pendingSrc, [x, y]);
               setPendingSrc(null);
@@ -222,7 +251,9 @@ function App() {
           imageData={refImg || undefined}
           metersPerPixel={refMetersPerPixel || 0}
           showCrosshair
-          onMouseMove={async (x, y) => {
+          resetOnImageLoad={zoomToFitOnLoad}
+          resetKey={resetKeyRef}
+          onImageMouseMove={async (x, y) => {
             rightLast.current = { x, y };
             cancelAnimationFrame(rightMoveRAF.current);
             rightMoveRAF.current = requestAnimationFrame(async () => {
@@ -230,13 +261,14 @@ function App() {
               if (!last) return;
               try {
                 const coords = await invoke('pixel_to', { u: last.x, v: last.y, mode: coordFormat });
-                updateCursorCoords(coords);
+                updateRefCursor(coords);
               } catch (e) {
                 // ignore
               }
             });
           }}
-          onClickImage={(x, y) => {
+          canvasProps={{ onContextMenu: (e) => { e.preventDefault(); if (pendingSrc) setPendingSrc(null); } }}
+          onImageClick={(x, y) => {
             if (pendingSrc) {
               addPair(pendingSrc, [x, y]);
               setPendingSrc(null);
@@ -250,6 +282,12 @@ function App() {
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
           <button onClick={pickMap}>Load Map TIFF</button>
           <button onClick={pickReference}>Load Reference TIFF</button>
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+          <button onClick={() => { setResetKeyMap(k => k + 1); setResetKeyRef(k => k + 1); }}>Reset View</button>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={zoomToFitOnLoad} onChange={(e) => setZoomToFitOnLoad(e.target.checked)} /> Zoom to fit on load
+          </label>
         </div>
         {isDev && (
           <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
@@ -341,15 +379,20 @@ function App() {
           </div>
         )}
         <h3>Pairs ({constraints.length})</h3>
-        <ol style={{ maxHeight: 200, overflow: 'auto' }}>
+        <ol style={{ maxHeight: 200, overflow: 'auto', paddingLeft: 16 }}>
           {constraints.map((c) => (
-            <li key={c.id}>src {formattedPairs[c.id]?.src || `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`} → dst {formattedPairs[c.id]?.dst || `${c.dst[0].toFixed(1)}, ${c.dst[1].toFixed(1)}`}</li>
+            <li key={c.id}
+                onContextMenu={async (e) => { e.preventDefault(); try { const list = await invoke('delete_constraint', { id: c.id }); const pairs = (list as any[]).filter((x) => 'PointPair' in x).map((x) => x.PointPair); setConstraints(pairs); } catch (err) { console.warn(err); } }}>
+              <span>src {formattedPairs[c.id]?.src || `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`} → dst {formattedPairs[c.id]?.dst || `${c.dst[0].toFixed(1)}, ${c.dst[1].toFixed(1)}`}</span>
+              <button style={{ marginLeft: 8 }} title="Delete" onClick={async () => { try { const list = await invoke('delete_constraint', { id: c.id }); const pairs = (list as any[]).filter((x) => 'PointPair' in x).map((x) => x.PointPair); setConstraints(pairs); } catch (err) { console.warn(err); } }}>✕</button>
+            </li>
           ))}
         </ol>
       </div>
-      <div className="status-bar">
-        {referenceGeoref?.wkt ? `Ref CRS: ${referenceGeoref.wkt.substring(0, 60)}...` : 'No Ref CRS'}
-        <span style={{ marginLeft: 'auto' }}>{cursorCoords}</span>
+      <div className="status-bar" style={{ display: 'flex', gap: 16, alignItems: 'center', padding: '0 8px' }}>
+        <span style={{ opacity: 0.8 }}>{referenceGeoref?.wkt ? `Ref CRS: ${referenceGeoref.wkt.substring(0, 60)}...` : 'No Ref CRS'}</span>
+        <span style={{ marginLeft: 'auto' }}><strong>Map</strong>: {mapCursor || '—'}</span>
+        <span><strong>Ref</strong>: {refCursor || '—'}</span>
         {isDev && lastLogPath && <span style={{ marginLeft: 12, opacity: 0.7 }}>Log: {lastLogPath}</span>}
       </div>
     </div>
