@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { log } from './logger';
+import { log, isLoggingEnabled } from './logger';
 
 export type OverlayTransform =
   | { kind: 'similarity'; params: [number, number, number, number] }
@@ -11,19 +11,26 @@ type Props = {
   overlayTransform?: OverlayTransform;
   onImageClick?: (imgX: number, imgY: number) => void;
   onImageMouseMove?: (imgX: number, imgY: number) => void;
+  view?: { zoom: number; pan: { x: number; y: number } } | undefined;
+  onViewChange?: (v: { zoom: number; pan: { x: number; y: number } }) => void;
+  onInteraction?: (e: { type: 'pan'; dx: number; dy: number } | { type: 'zoom'; factor: number; anchorCss: { x: number; y: number } }) => void;
+  onInfo?: (info: { fitScale: number; size: { width: number; height: number }; imgSize: { width: number; height: number } }) => void;
   // When true, resets pan/zoom on each new image load
   resetOnImageLoad?: boolean;
   // Changing this number triggers a view reset (pan=0, zoom=1)
   resetKey?: number;
   points?: { x: number; y: number; color?: string }[];
   metersPerPixel?: number; // image m per px at current view (approx)
+  dotRadiusPx?: number; // base radius in CSS px
+  outlinePreview?: { x: number; y: number; color?: string } | undefined;
   showCrosshair?: boolean;
   canvasProps?: React.CanvasHTMLAttributes<HTMLCanvasElement>;
 };
 
-const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, onImageMouseMove, resetOnImageLoad = true, resetKey, points = [], metersPerPixel, showCrosshair = false, canvasProps }) => {
+const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, onImageMouseMove, view, onViewChange, onInteraction, onInfo, resetOnImageLoad = true, resetKey, points = [], metersPerPixel, dotRadiusPx, outlinePreview, showCrosshair = false, canvasProps }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const offscreenRef = useRef<OffscreenCanvas | null>(null);
+  const offscreenCapableRef = useRef<boolean | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   const zoomRef = useRef(1);
@@ -43,8 +50,11 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
   const interactingRef = useRef(false);
   const interactTimer = useRef<number>(0 as unknown as number);
   const fpsElRef = useRef<HTMLDivElement | null>(null);
+  const overlayDotRef = useRef<HTMLDivElement | null>(null);
+  const [overlayDot, setOverlayDot] = useState<{ x: number; y: number; color?: string } | null>(null);
   const fpsLastRef = useRef(performance.now());
   const fpsFramesRef = useRef(0);
+  const transientPtsRef = useRef<{ x: number; y: number; color?: string }[]>([]);
 
   useEffect(() => {
     if (!imageData) { setImg(null); return; }
@@ -70,6 +80,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
       setContainerSize((prev) => {
         if (changed(prev)) {
           log('container_measure', { clientW: w, clientH: h, rectW: Math.round(rect.width), rectH: Math.round(rect.height) });
+          if (onInfo && img) onInfo({ fitScale: Math.min(w / img.width, h / img.height) || 1, size: { width: w, height: h }, imgSize: { width: img.width, height: img.height } });
           return { width: w, height: h };
         }
         return prev;
@@ -78,6 +89,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
       setFitScale((prev) => {
         if (Math.abs(prev - next) > 1e-6) {
           log('fitScale_update', { prev, next });
+          if (onInfo && img) onInfo({ fitScale: next, size: { width: w, height: h }, imgSize: { width: img.width, height: img.height } });
           return next;
         }
         return prev;
@@ -91,6 +103,18 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
     return () => ro.disconnect();
   }, [img]);
 
+  // Apply external view control
+  useEffect(() => {
+    if (!view) return;
+    const { zoom, pan } = view;
+    const changed = Math.abs(zoomRef.current - zoom) > 1e-6 || Math.abs(panRef.current.x - pan.x) > 0.5 || Math.abs(panRef.current.y - pan.y) > 0.5;
+    if (!changed) return;
+    zoomRef.current = zoom;
+    panRef.current = { x: pan.x, y: pan.y };
+    draw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view?.zoom, view?.pan.x, view?.pan.y]);
+
   // Reset view when a new image is loaded (opt-in)
   useEffect(() => {
     if (!img) return;
@@ -99,6 +123,9 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
       panRef.current = { x: 0, y: 0 };
       log('view_reset_on_image', {});
       draw();
+      // Clear any overlay/transient after a fresh image load
+      if (overlayDot) setOverlayDot(null);
+      transientPtsRef.current = [];
     }
   }, [img?.src]);
 
@@ -124,7 +151,21 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
     const pixelW = Math.round(w * dpr), pixelH = Math.round(h * dpr);
     let onscreen = canvas.getContext('2d')!;
 
-    const hasOff = typeof (window as any).OffscreenCanvas !== 'undefined';
+    // Detect OffscreenCanvas 2D support once, with fallback
+    if (offscreenCapableRef.current === null) {
+      try {
+        const OC = (window as any).OffscreenCanvas;
+        if (!OC) offscreenCapableRef.current = false;
+        else {
+          const test = new OC(1, 1);
+          const ctx = test.getContext('2d');
+          offscreenCapableRef.current = !!ctx;
+        }
+      } catch {
+        offscreenCapableRef.current = false;
+      }
+    }
+    let hasOff = !!offscreenCapableRef.current;
     if (hasOff) {
       if (!offscreenRef.current || (offscreenRef.current.width !== pixelW || offscreenRef.current.height !== pixelH)) {
         offscreenRef.current = new (window as any).OffscreenCanvas(pixelW, pixelH);
@@ -141,9 +182,21 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
       }
     }
 
-    const context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D = hasOff
-      ? (offscreenRef.current as OffscreenCanvas).getContext('2d')!
-      : onscreen;
+    let context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+    if (hasOff) {
+      const ctx = (offscreenRef.current as OffscreenCanvas).getContext('2d');
+      if (!ctx) {
+        // Fallback if context creation fails at runtime
+        hasOff = false;
+        offscreenCapableRef.current = false;
+        context = onscreen;
+        canvas.width = pixelW; canvas.height = pixelH;
+      } else {
+        context = ctx;
+      }
+    } else {
+      context = onscreen;
+    }
 
     // Clear
     if (hasOff) {
@@ -194,16 +247,80 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
       context.drawImage(img, offX, offY, drawW, drawH);
     }
 
-    // points
+    // Debug probe (throttled)
+    (function() {
+      const now = performance.now();
+      const last = (window as any).__dbg_last_points_probe || 0;
+      if (now - last > 200) {
+        (window as any).__dbg_last_points_probe = now;
+        const tf = transientPtsRef.current[0];
+        const tfScr = tf ? { x: Math.round(offX + tf.x * scale), y: Math.round(offY + tf.y * scale) } : null;
+        log('draw_probe', {
+          pointsN: points.length,
+          first: points[0] ? { x: points[0].x, y: points[0].y } : null,
+          transientN: transientPtsRef.current.length,
+          transientFirst: tf || null,
+          transientFirstScr: tfScr,
+          fitScale, zoom: zoomRef.current, pan: panRef.current,
+          dpr, hasOff
+        });
+      }
+    })();
+
+    // Constant screen-size points with light de-clutter when extremely zoomed out
+    const baseR = dotRadiusPx || 5; // CSS px
+    const rCss = scale < 0.05 ? 2 : scale < 0.12 ? 3 : baseR;
+    const rDev = hasOff ? rCss * dpr : rCss;
+    let drawnCells: Set<string> | null = null;
+    if (scale < 0.08) drawnCells = new Set<string>();
+    const cell = rCss * 2.2; // CSS px grid for declutter
+
     for (const p of points) {
-      const sx = hasOff ? (offX + p.x * scale) * dpr : offX + p.x * scale;
-      const sy = hasOff ? (offY + p.y * scale) * dpr : offY + p.y * scale;
+      const sxCss = offX + p.x * scale;
+      const syCss = offY + p.y * scale;
+      if (drawnCells) {
+        const key = `${Math.round(sxCss / cell)}:${Math.round(syCss / cell)}`;
+        if (drawnCells.has(key)) continue;
+        drawnCells.add(key);
+      }
+      const sx = hasOff ? sxCss * dpr : sxCss;
+      const sy = hasOff ? syCss * dpr : syCss;
       context.fillStyle = p.color || '#ff375f';
       context.beginPath();
-      context.arc(sx, sy, 4, 0, Math.PI * 2);
+      context.arc(sx, sy, rDev, 0, Math.PI * 2);
       context.fill();
       context.strokeStyle = 'rgba(0,0,0,0.6)';
       context.stroke();
+    }
+
+    // transient points (immediate feedback), drawn last
+    for (const p of transientPtsRef.current) {
+      const sxCss = offX + p.x * scale;
+      const syCss = offY + p.y * scale;
+      const sx = hasOff ? sxCss * dpr : sxCss;
+      const sy = hasOff ? syCss * dpr : syCss;
+      context.fillStyle = p.color || '#ff375f';
+      context.beginPath();
+      context.arc(sx, sy, rDev * 1.5, 0, Math.PI * 2);
+      context.fill();
+      context.strokeStyle = 'rgba(0,0,0,0.6)';
+      context.stroke();
+    }
+
+    // outline preview (stroke only)
+    if (outlinePreview) {
+      const px = outlinePreview.x, py = outlinePreview.y;
+      const sxCss = offX + px * scale;
+      const syCss = offY + py * scale;
+      const sx = hasOff ? sxCss * dpr : sxCss;
+      const sy = hasOff ? syCss * dpr : syCss;
+      context.save();
+      context.lineWidth = hasOff ? 2 * dpr : 2;
+      context.strokeStyle = outlinePreview.color || '#ffffff';
+      context.beginPath();
+      context.arc(sx, sy, rDev * 1.2, 0, Math.PI * 2);
+      context.stroke();
+      context.restore();
     }
 
     // overlay transformed grid (optional)
@@ -247,8 +364,15 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
     }
   };
 
-  // Redraw when static inputs change
-  useEffect(() => { draw(); }, [img, points, overlayTransform, fitScale, containerSize]);
+  // Redraw when inputs change; clear transient feedback once props likely reflect the state
+  useEffect(() => {
+    if (transientPtsRef.current.length) transientPtsRef.current = [];
+    if (overlayDot) setOverlayDot(null);
+    draw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [img, points, overlayTransform, fitScale, containerSize]);
+
+  // (removed duplicate draw effect; above effect handles redraws)
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -307,6 +431,8 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
           });
           panRef.current = { x: panRef.current.x + dx, y: panRef.current.y + dy };
           log('pan_drag', { dx, dy, next: panRef.current });
+          if (onViewChange) onViewChange({ zoom: zoomRef.current, pan: { ...panRef.current } });
+          if (onInteraction) onInteraction({ type: 'pan', dx, dy });
           draw();
         }
       });
@@ -358,6 +484,8 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
         zoomRef.current = newZoom;
         panRef.current = { x: newPanX, y: newPanY };
         draw();
+        if (onViewChange) onViewChange({ zoom: zoomRef.current, pan: { ...panRef.current } });
+        if (onInteraction) onInteraction({ type: 'zoom', factor: accum, anchorCss: anchor });
         // restore quality next frame
         requestAnimationFrame(() => { 
           qualityRef.current = 'high'; 
@@ -386,11 +514,44 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
     const sy = e.clientY - rect.top;
     const ix = (sx - offX) / scale;
     const iy = (sy - offY) / scale;
+    // Debug: log mapping details
+    if (isLoggingEnabled()) {
+      try {
+        log('click_map', {
+          dragSuppressed: false,
+          sx: Math.round(sx), sy: Math.round(sy), ix, iy,
+          offX: Math.round(offX), offY: Math.round(offY), scale,
+          dpr: (window.devicePixelRatio || 1),
+          hasOff: typeof (window as any).OffscreenCanvas !== 'undefined'
+        });
+      } catch {}
+    }
+
     if (ix >= 0 && iy >= 0 && ix <= img.width && iy <= img.height) {
-      // Treat click as interaction for one frame (disable grid, lower smoothing) for instant feedback
+      // Draw a one-frame magenta dot at RAW screen coords (sanity check)
+      if (isLoggingEnabled()) {
+        try {
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.save();
+            ctx.fillStyle = '#ff00ff';
+            ctx.beginPath();
+            ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+        } catch {}
+      }
+
+      // Immediate visual feedback via DOM overlay (constant screen size, not cleared by redraws)
+      setOverlayDot({ x: sx, y: sy, color: '#ff375f' });
+      // Also keep a transient image-space point for the next draw (for offscreen path consistency)
+      transientPtsRef.current = [{ x: ix, y: iy, color: '#ff375f' }];
+      // Treat click as interaction for one frame (disable grid, lower smoothing)
       interactingRef.current = true;
       qualityRef.current = 'low';
       onImageClick(ix, iy);
+      // Redraw with transient now; next frame restore quality and allow grid; props update clears transient
       draw();
       requestAnimationFrame(() => { qualityRef.current = 'high'; interactingRef.current = false; draw(); });
     }
@@ -406,6 +567,23 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
       }}
     >
       <div ref={fpsElRef as any} style={{ position: 'absolute', left: 6, top: 4, color: '#9cf', font: '11px system-ui', opacity: 0.8, pointerEvents: 'none' }}></div>
+      {overlayDot && (
+        <div
+          ref={overlayDotRef}
+          style={{
+            position: 'absolute',
+            left: overlayDot.x,
+            top: overlayDot.y,
+            transform: 'translate(-50%, -50%)',
+            width: 14,
+            height: 14,
+            borderRadius: 999,
+            background: overlayDot.color || '#ff375f',
+            boxShadow: '0 0 0 2px rgba(0,0,0,0.6)',
+            pointerEvents: 'none'
+          }}
+        />
+      )}
       <canvas 
         ref={canvasRef} 
         style={{ width: '100%', height: '100%', background: '#000', touchAction: 'none' }} 

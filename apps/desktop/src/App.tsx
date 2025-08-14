@@ -100,6 +100,14 @@ function App() {
 
   const [suggestedCrs, setSuggestedCrs] = useState<any | null>(null);
   const [refMetersPerPixel, setRefMetersPerPixel] = useState<number | null>(null);
+  const [lockViews, setLockViews] = useState(false);
+  const [mapView, setMapView] = useState<{ zoom: number; pan: { x: number; y: number } } | null>(null);
+  const [refView, setRefView] = useState<{ zoom: number; pan: { x: number; y: number } } | null>(null);
+  const [dotRadius, setDotRadius] = useState<number>(5);
+  const [activeView, setActiveView] = useState<'map' | 'ref' | null>(null);
+  const activeTimer = useRef<number>(0 as unknown as number);
+  const mapInfoRef = useRef<{ fitScale: number; size: { width: number; height: number }; imgSize: { width: number; height: number } } | null>(null);
+  const refInfoRef = useRef<{ fitScale: number; size: { width: number; height: number }; imgSize: { width: number; height: number } } | null>(null);
 
   useEffect(() => {
     async function fetchGeoref() {
@@ -120,6 +128,106 @@ function App() {
     }
     fetchGeoref();
   }, [refPath, datumPolicy]);
+
+  // Auto-enable view locking and rough alignment after first two pairs
+  useEffect(() => {
+    if (constraints.length >= 2 && !lockViews) {
+      setLockViews(true);
+      // Rough align: center both on their centroids and roughly match zooms by two-point scale
+      const srcs = constraints.map(c => c.src);
+      const dsts = constraints.map(c => c.dst);
+      const srcCx = srcs.reduce((a, b) => a + b[0], 0) / srcs.length;
+      const srcCy = srcs.reduce((a, b) => a + b[1], 0) / srcs.length;
+      const dstCx = dsts.reduce((a, b) => a + b[0], 0) / dsts.length;
+      const dstCy = dsts.reduce((a, b) => a + b[1], 0) / dsts.length;
+      let s = 1;
+      if (constraints.length >= 2) {
+        const a = constraints[0];
+        const b = constraints[1];
+        if (a && b) {
+          const ds = Math.hypot((b.src[0] - a.src[0]), (b.src[1] - a.src[1]));
+          const dd = Math.hypot((b.dst[0] - a.dst[0]), (b.dst[1] - a.dst[1]));
+          if (ds > 1e-6) s = dd / ds;
+        }
+      }
+      const mi = mapInfoRef.current, ri = refInfoRef.current;
+      if (mi && ri) {
+        const scaleMap = mi.fitScale * 1;
+        const scaleRef = ri.fitScale * 1;
+        const zoomMap = 1;
+        const zoomRef = (scaleMap * s) / (scaleRef || 1);
+        const pmx = mi.size.width / 2 - ((mi.size.width - mi.imgSize.width * (mi.fitScale * zoomMap)) / 2 + srcCx * (mi.fitScale * zoomMap));
+        const pmy = mi.size.height / 2 - ((mi.size.height - mi.imgSize.height * (mi.fitScale * zoomMap)) / 2 + srcCy * (mi.fitScale * zoomMap));
+        const prx = ri.size.width / 2 - ((ri.size.width - ri.imgSize.width * (ri.fitScale * zoomRef)) / 2 + dstCx * (ri.fitScale * zoomRef));
+        const pry = ri.size.height / 2 - ((ri.size.height - ri.imgSize.height * (ri.fitScale * zoomRef)) / 2 + dstCy * (ri.fitScale * zoomRef));
+        setMapView({ zoom: zoomMap, pan: { x: pmx, y: pmy } });
+        setRefView({ zoom: zoomRef, pan: { x: prx, y: pry } });
+      }
+    }
+  }, [constraints, lockViews]);
+
+  function zoomOtherView(
+    which: 'map' | 'ref',
+    factor: number,
+    anchorCss: { x: number; y: number }
+  ) {
+    const otherInfo = which === 'map' ? refInfoRef.current : mapInfoRef.current;
+    const otherView = which === 'map' ? refView : mapView;
+    if (!otherInfo || !otherView) return;
+    const { fitScale, size, imgSize } = otherInfo;
+    const oldScale = fitScale * otherView.zoom;
+    const newZoom = otherView.zoom * factor;
+    const newScale = fitScale * newZoom;
+    const drawW_old = imgSize.width * oldScale;
+    const drawH_old = imgSize.height * oldScale;
+    const offX_old = (size.width - drawW_old) / 2 + otherView.pan.x;
+    const offY_old = (size.height - drawH_old) / 2 + otherView.pan.y;
+    const imgX = (anchorCss.x - offX_old) / oldScale;
+    const imgY = (anchorCss.y - offY_old) / oldScale;
+    const drawW_new = imgSize.width * newScale;
+    const drawH_new = imgSize.height * newScale;
+    const offX_new_centered = (size.width - drawW_new) / 2;
+    const offY_new_centered = (size.height - drawH_new) / 2;
+    const newPanX = anchorCss.x - (offX_new_centered + imgX * newScale);
+    const newPanY = anchorCss.y - (offY_new_centered + imgY * newScale);
+    const next = { zoom: newZoom, pan: { x: newPanX, y: newPanY } };
+    if (which === 'map') setRefView(next); else setMapView(next);
+  }
+
+  // Mapping for preview on ref side
+  function mapToRef(x: number, y: number): { x: number; y: number } | null {
+    // Prefer full solution
+    if (solution?.t) {
+      if (solution.t.kind === 'similarity') {
+        const [s, th, tx, ty] = solution.t.params;
+        const c = Math.cos(th), si = Math.sin(th);
+        return { x: s * (c * x - si * y) + tx, y: s * (si * x + c * y) + ty };
+      }
+      if (solution.t.kind === 'affine') {
+        const [a, b, c, d, tx, ty] = solution.t.params;
+        return { x: a * x + b * y + tx, y: c * x + d * y + ty };
+      }
+    }
+    // Rough from first two pairs
+    if (constraints.length >= 2) {
+      const a = constraints[0];
+      const b = constraints[1];
+      if (!a || !b) return null;
+      const vSx = b.src[0] - a.src[0];
+      const vSy = b.src[1] - a.src[1];
+      const vDx = b.dst[0] - a.dst[0];
+      const vDy = b.dst[1] - a.dst[1];
+      const angS = Math.atan2(vSy, vSx);
+      const angD = Math.atan2(vDy, vDx);
+      const th = angD - angS;
+      const s = Math.hypot(vDx, vDy) / Math.max(1e-6, Math.hypot(vSx, vSy));
+      const c = Math.cos(th), si = Math.sin(th);
+      const tx = a.dst[0] - s * (c * a.src[0] - si * a.src[1]);
+      const ty = a.dst[1] - s * (si * a.src[0] + c * a.src[1]);
+      return { x: s * (c * x - si * y) + tx, y: s * (si * x + c * y) + ty };
+    }
+    return null;
+  }
 
   // Auto-dump logs ~8s after a new image is selected, to capture self-pan (only when logging enabled)
   useEffect(() => {
@@ -217,6 +325,14 @@ function App() {
     }
   }
 
+  // Re-solve when error unit or mapScale changes so residuals reflect units
+  useEffect(() => {
+    if (solution) {
+      solve(solution.method);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [errorUnit, mapScale]);
+
   async function exportWorld() {
     if (!mapPath || !solution) return;
     const base = mapPath.replace(/\.[^.]+$/, '');
@@ -237,20 +353,36 @@ function App() {
         <Canvas
           imageData={mapImg}
           overlayTransform={solution?.t || null}
-          showCrosshair
           resetOnImageLoad={zoomToFitOnLoad}
           resetKey={resetKeyMap}
+          dotRadiusPx={dotRadius}
+          view={activeView === 'map' ? undefined : (mapView || undefined)}
+          onViewChange={(v) => setMapView(v)}
+          onInteraction={(e) => {
+            setActiveView('map');
+            if (activeTimer.current) cancelAnimationFrame(activeTimer.current);
+            activeTimer.current = requestAnimationFrame(() => setActiveView(null));
+            if (!lockViews) return;
+            if (e.type === 'pan') {
+              setRefView(prev => prev ? { zoom: prev.zoom, pan: { x: prev.pan.x + e.dx, y: prev.pan.y + e.dy } } : prev);
+            } else {
+              zoomOtherView('map', e.factor, e.anchorCss);
+            }
+          }}
+          onInfo={(info) => { mapInfoRef.current = info; }}
           onImageMouseMove={(x, y) => {
             updateMapCursor(x, y);
           }}
           canvasProps={{ onContextMenu: (e) => { e.preventDefault(); if (pendingSrc) setPendingSrc(null); } }}
           onImageClick={(x, y) => {
+            console.debug('APP map onImageClick', { pendingBefore: pendingSrc, x, y });
             if (pendingSrc) {
               addPair(pendingSrc, [x, y]);
               setPendingSrc(null);
             } else {
               setPendingSrc([x, y]);
             }
+            queueMicrotask(() => console.debug('APP pendingSrc after microtask', { pendingAfter: pendingSrc }));
           }}
           points={[
             ...(pendingSrc ? [{ x: pendingSrc[0], y: pendingSrc[1], color: '#ff375f' }] : []),
@@ -260,9 +392,23 @@ function App() {
         <Canvas
           imageData={refImg || undefined}
           metersPerPixel={refMetersPerPixel || 0}
-          showCrosshair
           resetOnImageLoad={zoomToFitOnLoad}
           resetKey={resetKeyRef}
+           dotRadiusPx={dotRadius}
+          view={activeView === 'ref' ? undefined : (refView || undefined)}
+          onViewChange={(v) => setRefView(v)}
+          onInteraction={(e) => {
+            setActiveView('ref');
+            if (activeTimer.current) cancelAnimationFrame(activeTimer.current);
+            activeTimer.current = requestAnimationFrame(() => setActiveView(null));
+            if (!lockViews) return;
+            if (e.type === 'pan') {
+              setMapView(prev => prev ? { zoom: prev.zoom, pan: { x: prev.pan.x + e.dx, y: prev.pan.y + e.dy } } : prev);
+            } else {
+              zoomOtherView('ref', e.factor, e.anchorCss);
+            }
+          }}
+          onInfo={(info) => { refInfoRef.current = info; }}
           onImageMouseMove={async (x, y) => {
             rightLast.current = { x, y };
             cancelAnimationFrame(rightMoveRAF.current);
@@ -285,6 +431,7 @@ function App() {
             }
           }}
           points={constraints.map((p) => ({ x: p.dst[0], y: p.dst[1], color: '#64d2ff' }))}
+          outlinePreview={pendingSrc ? (() => { const m = mapToRef(pendingSrc[0], pendingSrc[1]); return m ? { x: m.x, y: m.y, color: '#ffffff' } : undefined; })() : undefined}
         />
       </div>
       <div className="side-panel">
@@ -297,6 +444,12 @@ function App() {
           <button onClick={() => { setResetKeyMap(k => k + 1); setResetKeyRef(k => k + 1); }}>Reset View</button>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <input type="checkbox" checked={zoomToFitOnLoad} onChange={(e) => setZoomToFitOnLoad(e.target.checked)} /> Zoom to fit on load
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={lockViews} onChange={(e) => setLockViews(e.target.checked)} /> Lock views
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            Dot size <input type="range" min={3} max={10} value={dotRadius} onChange={(e) => setDotRadius(parseInt(e.target.value))} />
           </label>
         </div>
         {isDev && (
