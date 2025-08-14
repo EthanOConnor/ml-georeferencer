@@ -51,6 +51,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
   const interactTimer = useRef<number>(0 as unknown as number);
   const fpsElRef = useRef<HTMLDivElement | null>(null);
   const overlayDotRef = useRef<HTMLDivElement | null>(null);
+  // Store overlay dot in IMAGE coordinates so it tracks with pan/zoom
   const [overlayDot, setOverlayDot] = useState<{ x: number; y: number; color?: string } | null>(null);
   const fpsLastRef = useRef(performance.now());
   const fpsFramesRef = useRef(0);
@@ -247,6 +248,14 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
       context.drawImage(img, offX, offY, drawW, drawH);
     }
 
+    // Position DOM overlay dot (image -> screen)
+    if (overlayDot && overlayDotRef.current) {
+      const sxCss = offX + overlayDot.x * scale;
+      const syCss = offY + overlayDot.y * scale;
+      overlayDotRef.current.style.left = `${sxCss}px`;
+      overlayDotRef.current.style.top = `${syCss}px`;
+    }
+
     // Debug probe (throttled)
     (function() {
       const now = performance.now();
@@ -366,8 +375,15 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
 
   // Redraw when inputs change; clear transient feedback once props likely reflect the state
   useEffect(() => {
-    if (transientPtsRef.current.length) transientPtsRef.current = [];
-    if (overlayDot) setOverlayDot(null);
+    // Only clear transient/overlay after the point is reflected in props
+    if (transientPtsRef.current.length) {
+      const t = transientPtsRef.current[0];
+      const found = points.some(p => Math.abs(p.x - t.x) < 0.5 && Math.abs(p.y - t.y) < 0.5);
+      if (found) {
+        transientPtsRef.current = [];
+        if (overlayDot) setOverlayDot(null);
+      }
+    }
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [img, points, overlayTransform, fitScale, containerSize]);

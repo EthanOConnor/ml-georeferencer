@@ -105,7 +105,7 @@ function App() {
   const [refView, setRefView] = useState<{ zoom: number; pan: { x: number; y: number } } | null>(null);
   const [dotRadius, setDotRadius] = useState<number>(5);
   const [activeView, setActiveView] = useState<'map' | 'ref' | null>(null);
-  const activeTimer = useRef<number>(0 as unknown as number);
+  const activeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapInfoRef = useRef<{ fitScale: number; size: { width: number; height: number }; imgSize: { width: number; height: number } } | null>(null);
   const refInfoRef = useRef<{ fitScale: number; size: { width: number; height: number }; imgSize: { width: number; height: number } } | null>(null);
 
@@ -360,8 +360,8 @@ function App() {
           onViewChange={(v) => setMapView(v)}
           onInteraction={(e) => {
             setActiveView('map');
-            if (activeTimer.current) cancelAnimationFrame(activeTimer.current);
-            activeTimer.current = requestAnimationFrame(() => setActiveView(null));
+            if (activeTimer.current) clearTimeout(activeTimer.current);
+            activeTimer.current = setTimeout(() => setActiveView(null), 120);
             if (!lockViews) return;
             if (e.type === 'pan') {
               setRefView(prev => prev ? { zoom: prev.zoom, pan: { x: prev.pan.x + e.dx, y: prev.pan.y + e.dy } } : prev);
@@ -399,8 +399,8 @@ function App() {
           onViewChange={(v) => setRefView(v)}
           onInteraction={(e) => {
             setActiveView('ref');
-            if (activeTimer.current) cancelAnimationFrame(activeTimer.current);
-            activeTimer.current = requestAnimationFrame(() => setActiveView(null));
+            if (activeTimer.current) clearTimeout(activeTimer.current);
+            activeTimer.current = setTimeout(() => setActiveView(null), 120);
             if (!lockViews) return;
             if (e.type === 'pan') {
               setMapView(prev => prev ? { zoom: prev.zoom, pan: { x: prev.pan.x + e.dx, y: prev.pan.y + e.dy } } : prev);
