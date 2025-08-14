@@ -28,8 +28,8 @@ function App() {
   const [zoomToFitOnLoad, setZoomToFitOnLoad] = useState(true);
   const [resetKeyMap, setResetKeyMap] = useState(0);
   const [resetKeyRef, setResetKeyRef] = useState(0);
-  const [mapCursor, setMapCursor] = useState<string>('');
-  const [refCursor, setRefCursor] = useState<string>('');
+  const mapCursorEl = useRef<HTMLSpanElement>(null);
+  const refCursorEl = useRef<HTMLSpanElement>(null);
   const rightMoveRAF = useRef(0);
   const rightLast = useRef<{ x: number; y: number } | null>(null);
   const [lastLogPath, setLastLogPath] = useState<string>('');
@@ -62,18 +62,20 @@ function App() {
   const updateMapCursor = (x: number, y: number) => {
     cancelAnimationFrame(mapCursorRAF.current);
     mapCursorRAF.current = requestAnimationFrame(() => {
-      setMapCursor(`${x.toFixed(2)}, ${y.toFixed(2)} px`);
+      if (mapCursorEl.current) mapCursorEl.current.textContent = `${x.toFixed(2)}, ${y.toFixed(2)} px`;
     });
   };
   const updateRefCursor = (coords: any) => {
     cancelAnimationFrame(refCursorRAF.current);
     refCursorRAF.current = requestAnimationFrame(() => {
-      if (!coords) { setRefCursor(''); return; }
+      if (!coords) { if (refCursorEl.current) refCursorEl.current.textContent = '—'; return; }
       const x = (coords as any).x ?? (Array.isArray(coords) ? coords[0] : undefined);
       const y = (coords as any).y ?? (Array.isArray(coords) ? coords[1] : undefined);
-      if (x === undefined || y === undefined) { setRefCursor(''); return; }
-      if (coordFormat === 'lonlat') setRefCursor(`${x.toFixed(6)}, ${y.toFixed(6)}`);
-      else setRefCursor(`${x.toFixed(2)}, ${y.toFixed(2)}${coordFormat === 'utm' ? ' m' : ''}`);
+      if (x === undefined || y === undefined) { if (refCursorEl.current) refCursorEl.current.textContent = '—'; return; }
+      if (refCursorEl.current) {
+        if (coordFormat === 'lonlat') refCursorEl.current.textContent = `${x.toFixed(6)}, ${y.toFixed(6)}`;
+        else refCursorEl.current.textContent = `${x.toFixed(2)}, ${y.toFixed(2)}${coordFormat === 'utm' ? ' m' : ''}`;
+      }
     });
   };
 
@@ -137,33 +139,41 @@ function App() {
   }, [mapImg, refImg]);
 
   useEffect(() => {
-    // recompute formatted pairs on coordFormat/constraints changes
+    // recompute formatted pairs on coordFormat/constraints changes (batched)
     async function recompute() {
       const out: Record<number, { src: string; dst: string }> = {};
-      for (const c of constraints) {
-        if (coordFormat === 'pixels') {
+      if (constraints.length === 0) { setFormattedPairs(out); return; }
+      if (coordFormat === 'pixels') {
+        for (const c of constraints) {
           out[c.id] = { src: `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`, dst: `${c.dst[0].toFixed(1)}, ${c.dst[1].toFixed(1)}` };
+        }
+        setFormattedPairs(out);
+        return;
+      }
+      try {
+        const pts = constraints.map(c => [c.dst[0], c.dst[1]]);
+        let convs: any[];
+        if (coordFormat === 'utm') {
+          convs = await invoke('pixels_to_projected', { policy: datumPolicy, pts });
         } else {
-          try {
-            let conv: any;
-            if (coordFormat === 'utm') {
-              conv = await invoke('pixel_to_projected', { policy: datumPolicy, u: c.dst[0], v: c.dst[1] });
-            } else {
-              conv = await invoke('pixel_to', { u: c.dst[0], v: c.dst[1], mode: coordFormat });
-            }
-            const a = conv as [number, number] | null;
-            if (a) {
-              const fmt = coordFormat === 'lonlat' ? `${a[0].toFixed(6)}, ${a[1].toFixed(6)}` : `${a[0].toFixed(2)}, ${a[1].toFixed(2)}`;
-              out[c.id] = { src: `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`, dst: fmt };
-            } else {
-              out[c.id] = { src: `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`, dst: 'n/a' };
-            }
-          } catch (e) {
+          convs = await invoke('pixels_to', { mode: coordFormat, pts });
+        }
+        constraints.forEach((c, i) => {
+          const r = convs[i];
+          if (r && r.x != null && r.y != null) {
+            const fmt = coordFormat === 'lonlat' ? `${r.x.toFixed(6)}, ${r.y.toFixed(6)}` : `${r.x.toFixed(2)}, ${r.y.toFixed(2)}`;
+            out[c.id] = { src: `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`, dst: fmt };
+          } else {
             out[c.id] = { src: `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`, dst: 'n/a' };
           }
+        });
+        setFormattedPairs(out);
+      } catch (e) {
+        for (const c of constraints) {
+          out[c.id] = { src: `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`, dst: 'n/a' };
         }
+        setFormattedPairs(out);
       }
-      setFormattedPairs(out);
     }
     recompute();
   }, [coordFormat, constraints, datumPolicy]);
@@ -391,8 +401,8 @@ function App() {
       </div>
       <div className="status-bar" style={{ display: 'flex', gap: 16, alignItems: 'center', padding: '0 8px' }}>
         <span style={{ opacity: 0.8 }}>{referenceGeoref?.wkt ? `Ref CRS: ${referenceGeoref.wkt.substring(0, 60)}...` : 'No Ref CRS'}</span>
-        <span style={{ marginLeft: 'auto' }}><strong>Map</strong>: {mapCursor || '—'}</span>
-        <span><strong>Ref</strong>: {refCursor || '—'}</span>
+        <span style={{ marginLeft: 'auto' }}><strong>Map</strong>: <span ref={mapCursorEl}>—</span></span>
+        <span><strong>Ref</strong>: <span ref={refCursorEl}>—</span></span>
         {isDev && lastLogPath && <span style={{ marginLeft: 12, opacity: 0.7 }}>Log: {lastLogPath}</span>}
       </div>
     </div>

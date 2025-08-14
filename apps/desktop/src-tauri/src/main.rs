@@ -390,7 +390,9 @@ fn main() {
             get_reference_crs,
             suggest_output_epsg,
             pixel_to,
+            pixels_to,
             pixel_to_projected,
+            pixels_to_projected,
             metric_scale_at,
             save_debug_log,
         ])
@@ -616,7 +618,7 @@ fn suggest_output_epsg(
     }
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone, Copy)]
 struct XY {
     x: f64,
     y: f64,
@@ -629,6 +631,51 @@ fn pixel_to(mode: String, u: f64, v: f64, state: State<AppState>) -> Result<Opti
 }
 
 #[tauri::command]
+fn pixels_to(mode: String, pts: Vec<[f64; 2]>, state: State<AppState>) -> Result<Vec<Option<XY>>, String> {
+    let geo = match state.ref_georef.lock().map_err(|e| e.to_string())?.clone() {
+        Some(g) => g,
+        None => return Ok(vec![None; pts.len()]),
+    };
+    let mut out = Vec::with_capacity(pts.len());
+    match mode.as_str() {
+        "lonlat" => {
+            if let Some(wkt) = &geo.wkt {
+                let to_wgs84 = proj::Proj::new_known_crs(wkt, "EPSG:4326", None)
+                    .map_err(|e| e.to_string())?;
+                for [u, v] in pts {
+                    let world = io::pixel_to_world(&geo, [u, v]);
+                    let (lon, lat) = to_wgs84.convert((world[0], world[1])).map_err(|e| e.to_string())?;
+                    out.push(Some(XY { x: lon, y: lat }));
+                }
+            } else {
+                out.resize(pts.len(), None);
+            }
+        }
+        "local_m" => {
+            let ref_path = state
+                .reference_path
+                .lock()
+                .map_err(|e| e.to_string())?
+                .clone()
+                .ok_or_else(|| "reference path not set".to_string())?;
+            let (w, h) = io::image_dimensions(&ref_path).map_err(|e| e.to_string())?;
+            let center = [(w as f64) / 2.0, (h as f64) / 2.0];
+            for [u, v] in pts {
+                match io::pixel_to_local_meters(&geo, [u, v], center) {
+                    Ok(Some(m)) => out.push(Some(XY { x: m[0], y: m[1] })),
+                    _ => out.push(None),
+                }
+            }
+        }
+        "pixel" => {
+            for [u, v] in pts { out.push(Some(XY { x: u, y: v })); }
+        }
+        _ => { out.resize(pts.len(), None); }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
 fn pixel_to_projected(
     policy: String,
     u: f64,
@@ -637,6 +684,42 @@ fn pixel_to_projected(
 ) -> Result<Option<XY>, String> {
     let r = _convert_reference_pixel(u, v, "projected_m", &policy, &state)?;
     Ok(r.map(|a| XY { x: a[0], y: a[1] }))
+}
+
+#[tauri::command]
+fn pixels_to_projected(
+    policy: String,
+    pts: Vec<[f64; 2]>,
+    state: State<AppState>,
+) -> Result<Vec<Option<XY>>, String> {
+    use std::collections::HashMap;
+    let geo = match state.ref_georef.lock().map_err(|e| e.to_string())?.clone() {
+        Some(g) => g,
+        None => return Ok(vec![None; pts.len()]),
+    };
+    let Some(wkt) = &geo.wkt else { return Ok(vec![None; pts.len()]); };
+    let to_wgs84 = proj::Proj::new_known_crs(wkt, "EPSG:4326", None).map_err(|e| e.to_string())?;
+    let mut cache: HashMap<(i32, bool), proj::Proj> = HashMap::new();
+    let mut out = Vec::with_capacity(pts.len());
+    for [u, v] in pts {
+        let world = io::pixel_to_world(&geo, [u, v]);
+        let (lon, lat) = to_wgs84.convert((world[0], world[1])).map_err(|e| e.to_string())?;
+        let zone = (((lon + 180.0) / 6.0).floor() as i32).clamp(1, 60);
+        let north = lat >= 0.0;
+        let key = (zone, north);
+        let prj = cache.entry(key).or_insert_with(|| {
+            match policy.as_str() {
+                "NAD83_2011" => proj::Proj::new(&format!("+proj=utm +zone={} +ellps=GRS80 +units=m +no_defs +type=crs", zone)).unwrap(),
+                _ => {
+                    let epsg = if north { format!("EPSG:326{}", zone) } else { format!("EPSG:327{}", zone) };
+                    proj::Proj::new_known_crs("EPSG:4326", &epsg, None).unwrap()
+                }
+            }
+        });
+        let (x, y) = prj.convert((lon, lat)).map_err(|e| e.to_string())?;
+        out.push(Some(XY { x, y }));
+    }
+    Ok(out)
 }
 
 #[derive(serde::Serialize)]

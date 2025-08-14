@@ -23,6 +23,7 @@ type Props = {
 
 const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, onImageMouseMove, resetOnImageLoad = true, resetKey, points = [], metersPerPixel, showCrosshair = false, canvasProps }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const offscreenRef = useRef<OffscreenCanvas | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   const zoomRef = useRef(1);
@@ -39,6 +40,11 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
   const wheelAccumRef = useRef(1);
   const wheelAnchorRef = useRef<{ x: number; y: number } | null>(null);
   const wheelRaf = useRef(0);
+  const interactingRef = useRef(false);
+  const interactTimer = useRef<number>(0 as unknown as number);
+  const fpsElRef = useRef<HTMLDivElement | null>(null);
+  const fpsLastRef = useRef(performance.now());
+  const fpsFramesRef = useRef(0);
 
   useEffect(() => {
     if (!imageData) { setImg(null); return; }
@@ -115,14 +121,38 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
 
     const dpr = window.devicePixelRatio || 1;
     const w = containerSize.width, h = containerSize.height;
-    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
-      canvas.width  = Math.round(w * dpr);
-      canvas.height = Math.round(h * dpr);
-      log('canvas_resize_pixels', { cssW: w, cssH: h, dpr, pixelW: canvas.width, pixelH: canvas.height });
+    const pixelW = Math.round(w * dpr), pixelH = Math.round(h * dpr);
+    let onscreen = canvas.getContext('2d')!;
+
+    const hasOff = typeof (window as any).OffscreenCanvas !== 'undefined';
+    if (hasOff) {
+      if (!offscreenRef.current || (offscreenRef.current.width !== pixelW || offscreenRef.current.height !== pixelH)) {
+        offscreenRef.current = new (window as any).OffscreenCanvas(pixelW, pixelH);
+      }
+      // Ensure onscreen canvas uses CSS pixel coordinate system (w x h)
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+    } else {
+      if (canvas.width !== pixelW || canvas.height !== pixelH) {
+        canvas.width = pixelW;
+        canvas.height = pixelH;
+      }
     }
-    const context = canvas.getContext('2d')!;
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);  // draw in CSS px space below
-    context.clearRect(0, 0, width, height);
+
+    const context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D = hasOff
+      ? (offscreenRef.current as OffscreenCanvas).getContext('2d')!
+      : onscreen;
+
+    // Clear
+    if (hasOff) {
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.clearRect(0, 0, pixelW, pixelH);
+    } else {
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      context.clearRect(0, 0, w, h);
+    }
 
     if (!img) return;
 
@@ -133,6 +163,18 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
     const drawH = img.height * scale;
     const offX = (width - drawW) / 2 + pan.x;
     const offY = (height - drawH) / 2 + pan.y;
+
+    // FPS tracking
+    {
+      const now = performance.now();
+      fpsFramesRef.current += 1;
+      if (now - fpsLastRef.current >= 500) {
+        const fps = (fpsFramesRef.current * 1000) / (now - fpsLastRef.current);
+        if (fpsElRef.current) fpsElRef.current.textContent = `${fps.toFixed(0)} fps`;
+        fpsFramesRef.current = 0;
+        fpsLastRef.current = now;
+      }
+    }
 
     // Throttled draw-state logging
     (function() {
@@ -146,12 +188,16 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
 
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = qualityRef.current;
-    context.drawImage(img, offX, offY, drawW, drawH);
+    if (hasOff) {
+      context.drawImage(img, offX * dpr, offY * dpr, drawW * dpr, drawH * dpr);
+    } else {
+      context.drawImage(img, offX, offY, drawW, drawH);
+    }
 
     // points
     for (const p of points) {
-      const sx = offX + p.x * scale;
-      const sy = offY + p.y * scale;
+      const sx = hasOff ? (offX + p.x * scale) * dpr : offX + p.x * scale;
+      const sy = hasOff ? (offY + p.y * scale) * dpr : offY + p.y * scale;
       context.fillStyle = p.color || '#ff375f';
       context.beginPath();
       context.arc(sx, sy, 4, 0, Math.PI * 2);
@@ -161,28 +207,43 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
     }
 
     // overlay transformed grid (optional)
-    if (overlayTransform) {
+    if (overlayTransform && !interactingRef.current) {
       context.save();
       context.strokeStyle = 'rgba(0, 200, 255, 0.6)';
-      const spacingPx = Math.max(50, Math.min(drawW, drawH) / 10);
+      const spacingPx = Math.max(80, Math.min(drawW, drawH) / 6);
       const spacingImg = spacingPx / scale;
       for (let x = 0; x <= img.width; x += spacingImg) {
         const p0 = applyTransform(overlayTransform, [x, 0]);
         const p1 = applyTransform(overlayTransform, [x, img.height]);
         context.beginPath();
-        context.moveTo(offX + p0[0] * scale, offY + p0[1] * scale);
-        context.lineTo(offX + p1[0] * scale, offY + p1[1] * scale);
+        const m0x = hasOff ? (offX + p0[0] * scale) * dpr : offX + p0[0] * scale;
+        const m0y = hasOff ? (offY + p0[1] * scale) * dpr : offY + p0[1] * scale;
+        const m1x = hasOff ? (offX + p1[0] * scale) * dpr : offX + p1[0] * scale;
+        const m1y = hasOff ? (offY + p1[1] * scale) * dpr : offY + p1[1] * scale;
+        context.moveTo(m0x, m0y);
+        context.lineTo(m1x, m1y);
         context.stroke();
       }
       for (let y = 0; y <= img.height; y += spacingImg) {
         const p0 = applyTransform(overlayTransform, [0, y]);
         const p1 = applyTransform(overlayTransform, [img.width, y]);
         context.beginPath();
-        context.moveTo(offX + p0[0] * scale, offY + p0[1] * scale);
-        context.lineTo(offX + p1[0] * scale, offY + p1[1] * scale);
+        const m0x = hasOff ? (offX + p0[0] * scale) * dpr : offX + p0[0] * scale;
+        const m0y = hasOff ? (offY + p0[1] * scale) * dpr : offY + p0[1] * scale;
+        const m1x = hasOff ? (offX + p1[0] * scale) * dpr : offX + p1[0] * scale;
+        const m1y = hasOff ? (offY + p1[1] * scale) * dpr : offY + p1[1] * scale;
+        context.moveTo(m0x, m0y);
+        context.lineTo(m1x, m1y);
         context.stroke();
       }
       context.restore();
+    }
+
+    // Blit offscreen buffer to onscreen
+    if (hasOff) {
+      onscreen.setTransform(1, 0, 0, 1, 0, 0);
+      onscreen.clearRect(0, 0, w, h);
+      onscreen.drawImage(offscreenRef.current as any, 0, 0, pixelW, pixelH, 0, 0, w, h);
     }
   };
 
@@ -235,10 +296,14 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
         if (dx !== 0 || dy !== 0) {
           // lower quality during motion
           qualityRef.current = 'low';
+          interactingRef.current = true;
           if (qualityIdleTimer.current) cancelAnimationFrame(qualityIdleTimer.current);
           qualityIdleTimer.current = requestAnimationFrame(() => {
             // after a frame idle, lift quality (will be set to high on next draw idle pass)
             qualityRef.current = 'high';
+            // allow grid again after brief idle
+            if (interactTimer.current) cancelAnimationFrame(interactTimer.current);
+            interactTimer.current = requestAnimationFrame(() => { interactingRef.current = false; draw(); });
           });
           panRef.current = { x: panRef.current.x + dx, y: panRef.current.y + dy };
           log('pan_drag', { dx, dy, next: panRef.current });
@@ -289,11 +354,16 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
         const newPanX = anchor.x - (offX_new_centered + imgX * newScale);
         const newPanY = anchor.y - (offY_new_centered + imgY * newScale);
         qualityRef.current = 'low';
+        interactingRef.current = true;
         zoomRef.current = newZoom;
         panRef.current = { x: newPanX, y: newPanY };
         draw();
         // restore quality next frame
-        requestAnimationFrame(() => { qualityRef.current = 'high'; });
+        requestAnimationFrame(() => { 
+          qualityRef.current = 'high'; 
+          if (interactTimer.current) cancelAnimationFrame(interactTimer.current);
+          interactTimer.current = requestAnimationFrame(() => { interactingRef.current = false; draw(); });
+        });
       });
     }
   };
@@ -317,7 +387,12 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
     const ix = (sx - offX) / scale;
     const iy = (sy - offY) / scale;
     if (ix >= 0 && iy >= 0 && ix <= img.width && iy <= img.height) {
+      // Treat click as interaction for one frame (disable grid, lower smoothing) for instant feedback
+      interactingRef.current = true;
+      qualityRef.current = 'low';
       onImageClick(ix, iy);
+      draw();
+      requestAnimationFrame(() => { qualityRef.current = 'high'; interactingRef.current = false; draw(); });
     }
   };
 
@@ -330,6 +405,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
         overflow: 'hidden'
       }}
     >
+      <div ref={fpsElRef as any} style={{ position: 'absolute', left: 6, top: 4, color: '#9cf', font: '11px system-ui', opacity: 0.8, pointerEvents: 'none' }}></div>
       <canvas 
         ref={canvasRef} 
         style={{ width: '100%', height: '100%', background: '#000', touchAction: 'none' }} 
