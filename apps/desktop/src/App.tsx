@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import Canvas, { OverlayTransform } from './Canvas';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
+import { downloadLogs, clearLogs, log, setLoggingEnabled, isLoggingEnabled, getLogs } from './logger';
 
 function App() {
+  const buildTag = useMemo(() => new Date().toISOString(), []);
+  const isDev = (import.meta as any)?.env?.DEV === true;
   const [mapPath, setMapPath] = useState<string | null>(null);
   const [refPath, setRefPath] = useState<string | null>(null);
   const [mapImg, setMapImg] = useState<string | null>(null);
@@ -20,6 +23,30 @@ function App() {
   const [formattedPairs, setFormattedPairs] = useState<Record<number, { src: string; dst: string }>>({});
   const [datumPolicy, setDatumPolicy] = useState<'WGS84' | 'NAD83_2011'>('WGS84');
   const [cursorCoords, setCursorCoords] = useState<string>('');
+  const coordUpdateRef = useRef(0);
+  const [lastLogPath, setLastLogPath] = useState<string>('');
+
+  // Global wheel observer to detect unintended wheel inputs
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      const target = (e.target as HTMLElement)?.tagName || 'unknown';
+      const cls = (e.target as HTMLElement)?.className || '';
+      log('global_wheel', { deltaY: e.deltaY, target, cls });
+    };
+    window.addEventListener('wheel', onWheel, { passive: true });
+    return () => window.removeEventListener('wheel', onWheel);
+  }, []);
+
+  const updateCursorCoords = (coords: any) => {
+    cancelAnimationFrame(coordUpdateRef.current);
+    coordUpdateRef.current = requestAnimationFrame(() => {
+        if (coords) {
+            setCursorCoords(`${coords.x.toFixed(2)}, ${coords.y.toFixed(2)}`);
+        } else {
+            setCursorCoords('');
+        }
+    });
+  };
 
   async function pickMap() {
     const path = await open({ multiple: false, filters: [{ name: 'TIFF', extensions: ['tif', 'tiff'] }] });
@@ -62,6 +89,23 @@ function App() {
     }
     fetchGeoref();
   }, [refPath, datumPolicy]);
+
+  // Auto-dump logs ~8s after a new image is selected, to capture self-pan (only when logging enabled)
+  useEffect(() => {
+    if (!mapImg && !refImg) return;
+    if (!isLoggingEnabled()) return;
+    const t = setTimeout(async () => {
+      try {
+        const payload = JSON.stringify({ when: new Date().toISOString(), note: 'auto-save after image load', logs: getLogs() });
+        const path = (await invoke('save_debug_log', { data: payload, filename: null })) as string;
+        console.info('Saved debug log to', path);
+        setLastLogPath(path);
+      } catch (e) {
+        console.warn('Failed to save debug log', e);
+      }
+    }, 8000);
+    return () => clearTimeout(t);
+  }, [mapImg, refImg]);
 
   useEffect(() => {
     // recompute formatted pairs on coordFormat/constraints changes
@@ -150,14 +194,14 @@ function App() {
 
   return (
     <div className="container">
-      <div className="canvas-container">
+      <div className="canvas-container" style={{ flex: '1 1 auto', position: 'relative', minHeight: 0 }}>
         <Canvas
           imageData={mapImg}
           overlayTransform={solution?.t || null}
           showCrosshair
-          onMouseMove={async (x, y) => {
-            const coords = await invoke('pixel_to', { u: x, v: y, mode: 'pixel' });
-            setCursorCoords(coords ? `${(coords as any).x.toFixed(2)}, ${(coords as any).y.toFixed(2)}` : '');
+          onMouseMove={(x, y) => {
+            // Local pixel mode: avoid Tauri bridge roundtrip for responsiveness
+            updateCursorCoords({ x, y });
           }}
           onClickImage={(x, y) => {
             if (pendingSrc) {
@@ -178,7 +222,7 @@ function App() {
           showCrosshair
           onMouseMove={async (x, y) => {
             const coords = await invoke('pixel_to', { u: x, v: y, mode: coordFormat });
-            setCursorCoords(coords ? `${(coords as any).x.toFixed(2)}, ${(coords as any).y.toFixed(2)}` : '');
+            updateCursorCoords(coords);
           }}
           onClickImage={(x, y) => {
             if (pendingSrc) {
@@ -190,11 +234,28 @@ function App() {
         />
       </div>
       <div className="side-panel">
-        <h2>Controls</h2>
+        <h2>Controls {isDev && <small style={{ opacity: 0.6, fontWeight: 'normal' }}>(build {buildTag})</small>}</h2>
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
           <button onClick={pickMap}>Load Map TIFF</button>
           <button onClick={pickReference}>Load Reference TIFF</button>
         </div>
+        {isDev && (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <button onClick={() => { downloadLogs(); }}>Download Logs</button>
+            <button onClick={() => { clearLogs(); }}>Clear Logs</button>
+            <button onClick={() => { const en = !isLoggingEnabled(); setLoggingEnabled(en); }}>Toggle Logging</button>
+            <button onClick={async () => {
+              try {
+                const payload = JSON.stringify({ when: new Date().toISOString(), note: 'manual save', logs: getLogs() });
+                const path = (await invoke('save_debug_log', { data: payload, filename: null })) as string;
+                setLastLogPath(path);
+                alert(`Saved debug log to:\n${path}`);
+              } catch (e) {
+                alert(`Failed to save debug log: ${e}`);
+              }
+            }}>Save Logs</button>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
           <button onClick={() => solve('similarity')} disabled={constraints.length < 2}>Solve Similarity</button>
           <button onClick={() => solve('affine')} disabled={constraints.length < 3}>Solve Affine</button>
@@ -277,6 +338,7 @@ function App() {
       <div className="status-bar">
         {referenceGeoref?.wkt ? `Ref CRS: ${referenceGeoref.wkt.substring(0, 60)}...` : 'No Ref CRS'}
         <span style={{ marginLeft: 'auto' }}>{cursorCoords}</span>
+        {isDev && lastLogPath && <span style={{ marginLeft: 12, opacity: 0.7 }}>Log: {lastLogPath}</span>}
       </div>
     </div>
   );

@@ -1,9 +1,12 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import Canvas from './Canvas';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
+import { downloadLogs, clearLogs, log, setLoggingEnabled, isLoggingEnabled, getLogs } from './logger';
 function App() {
+    const buildTag = useMemo(() => new Date().toISOString(), []);
+    const isDev = import.meta?.env?.DEV === true;
     const [mapPath, setMapPath] = useState(null);
     const [refPath, setRefPath] = useState(null);
     const [mapImg, setMapImg] = useState(null);
@@ -20,6 +23,29 @@ function App() {
     const [formattedPairs, setFormattedPairs] = useState({});
     const [datumPolicy, setDatumPolicy] = useState('WGS84');
     const [cursorCoords, setCursorCoords] = useState('');
+    const coordUpdateRef = useRef(0);
+    const [lastLogPath, setLastLogPath] = useState('');
+    // Global wheel observer to detect unintended wheel inputs
+    useEffect(() => {
+        const onWheel = (e) => {
+            const target = e.target?.tagName || 'unknown';
+            const cls = e.target?.className || '';
+            log('global_wheel', { deltaY: e.deltaY, target, cls });
+        };
+        window.addEventListener('wheel', onWheel, { passive: true });
+        return () => window.removeEventListener('wheel', onWheel);
+    }, []);
+    const updateCursorCoords = (coords) => {
+        cancelAnimationFrame(coordUpdateRef.current);
+        coordUpdateRef.current = requestAnimationFrame(() => {
+            if (coords) {
+                setCursorCoords(`${coords.x.toFixed(2)}, ${coords.y.toFixed(2)}`);
+            }
+            else {
+                setCursorCoords('');
+            }
+        });
+    };
     async function pickMap() {
         const path = await open({ multiple: false, filters: [{ name: 'TIFF', extensions: ['tif', 'tiff'] }] });
         if (typeof path === 'string') {
@@ -60,6 +86,25 @@ function App() {
         }
         fetchGeoref();
     }, [refPath, datumPolicy]);
+    // Auto-dump logs ~8s after a new image is selected, to capture self-pan (only when logging enabled)
+    useEffect(() => {
+        if (!mapImg && !refImg)
+            return;
+        if (!isLoggingEnabled())
+            return;
+        const t = setTimeout(async () => {
+            try {
+                const payload = JSON.stringify({ when: new Date().toISOString(), note: 'auto-save after image load', logs: getLogs() });
+                const path = (await invoke('save_debug_log', { data: payload, filename: null }));
+                console.info('Saved debug log to', path);
+                setLastLogPath(path);
+            }
+            catch (e) {
+                console.warn('Failed to save debug log', e);
+            }
+        }, 8000);
+        return () => clearTimeout(t);
+    }, [mapImg, refImg]);
     useEffect(() => {
         // recompute formatted pairs on coordFormat/constraints changes
         async function recompute() {
@@ -145,9 +190,9 @@ function App() {
         await navigator.clipboard.writeText(proj);
         alert('PROJ string copied to clipboard');
     }
-    return (_jsxs("div", { className: "container", children: [_jsxs("div", { className: "canvas-container", children: [_jsx(Canvas, { imageData: mapImg, overlayTransform: solution?.t || null, showCrosshair: true, onMouseMove: async (x, y) => {
-                            const coords = await invoke('pixel_to', { u: x, v: y, mode: 'pixel' });
-                            setCursorCoords(coords ? `${coords.x.toFixed(2)}, ${coords.y.toFixed(2)}` : '');
+    return (_jsxs("div", { className: "container", children: [_jsxs("div", { className: "canvas-container", style: { flex: '1 1 auto', position: 'relative', minHeight: 0 }, children: [_jsx(Canvas, { imageData: mapImg, overlayTransform: solution?.t || null, showCrosshair: true, onMouseMove: (x, y) => {
+                            // Local pixel mode: avoid Tauri bridge roundtrip for responsiveness
+                            updateCursorCoords({ x, y });
                         }, onClickImage: (x, y) => {
                             if (pendingSrc) {
                                 addPair(pendingSrc, [x, y]);
@@ -161,12 +206,22 @@ function App() {
                             ...constraints.map((p) => ({ x: p.src[0], y: p.src[1], color: '#ffd60a' })),
                         ] }), _jsx(Canvas, { imageData: refImg || undefined, metersPerPixel: refMetersPerPixel || 0, showCrosshair: true, onMouseMove: async (x, y) => {
                             const coords = await invoke('pixel_to', { u: x, v: y, mode: coordFormat });
-                            setCursorCoords(coords ? `${coords.x.toFixed(2)}, ${coords.y.toFixed(2)}` : '');
+                            updateCursorCoords(coords);
                         }, onClickImage: (x, y) => {
                             if (pendingSrc) {
                                 addPair(pendingSrc, [x, y]);
                                 setPendingSrc(null);
                             }
-                        }, points: constraints.map((p) => ({ x: p.dst[0], y: p.dst[1], color: '#64d2ff' })) })] }), _jsxs("div", { className: "side-panel", children: [_jsx("h2", { children: "Controls" }), _jsxs("div", { style: { display: 'flex', gap: 8, marginBottom: 8 }, children: [_jsx("button", { onClick: pickMap, children: "Load Map TIFF" }), _jsx("button", { onClick: pickReference, children: "Load Reference TIFF" })] }), _jsxs("div", { style: { display: 'flex', gap: 8, marginBottom: 8 }, children: [_jsx("button", { onClick: () => solve('similarity'), disabled: constraints.length < 2, children: "Solve Similarity" }), _jsx("button", { onClick: () => solve('affine'), disabled: constraints.length < 3, children: "Solve Affine" }), _jsx("button", { onClick: exportWorld, disabled: !solution, children: "Export World File" }), _jsx("button", { onClick: copyProj, disabled: !solution, children: "Copy PROJ" })] }), _jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("label", { htmlFor: "errorUnit", children: "Error Units:" }), _jsxs("select", { id: "errorUnit", value: errorUnit, onChange: (e) => setErrorUnit(e.target.value), children: [_jsx("option", { value: "pixels", children: "Pixels" }), _jsx("option", { value: "meters", children: "Meters" }), _jsx("option", { value: "mapmm", children: "Map Millimeters" })] }), errorUnit === 'mapmm' && (_jsx("input", { type: "number", placeholder: "Map Scale (e.g., 10000)", value: mapScale || '', onChange: (e) => setMapScale(e.target.value ? parseFloat(e.target.value) : null) }))] }), _jsx("div", { style: { marginBottom: 8 }, children: _jsxs("label", { children: [_jsx("input", { type: "checkbox", checked: globalOnly, onChange: (e) => setGlobalOnly(e.target.checked) }), " Global only"] }) }), _jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("label", { htmlFor: "coordFormat", children: "Coordinate format:" }), ' ', _jsxs("select", { id: "coordFormat", value: coordFormat, onChange: (e) => setCoordFormat(e.target.value), children: [_jsx("option", { value: "pixels", children: "Pixels" }), _jsx("option", { value: "lonlat", children: "Lon/Lat (deg)" }), _jsx("option", { value: "local_m", children: "Local meters (AEQD)" }), _jsx("option", { value: "utm", children: "Projected meters (UTM)" })] })] }), _jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("label", { htmlFor: "datumPolicy", children: "Output CRS Policy:" }), _jsxs("select", { id: "datumPolicy", value: datumPolicy, onChange: (e) => setDatumPolicy(e.target.value), children: [_jsx("option", { value: "WGS84", children: "WGS 84" }), _jsx("option", { value: "NAD83_2011", children: "NAD83(2011)" })] })] }), _jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("strong", { children: "Status: " }), constraints.length < 2 && 'Add ≥2 pairs for similarity', constraints.length >= 2 && constraints.length < 3 && 'Add ≥3 for affine', constraints.length >= 3 && 'Ready to solve'] }), solution && (_jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("strong", { children: "Solution:" }), " ", solution.method, " | RMSE ", solution.rmse.toFixed(3), " | P90 ", solution.p90.toFixed(3)] })), referenceGeoref && (_jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("h3", { children: "Reference Georeferencing" }), _jsxs("p", { children: ["Affine: [", referenceGeoref.affine.map(a => a.toFixed(3)).join(', '), "]"] }), suggestedCrs && _jsxs("p", { children: ["Suggested output CRS: ", suggestedCrs.name] }), referenceGeoref.wkt && _jsxs("p", { children: ["CRS (PRJ): ", referenceGeoref.wkt.substring(0, 120), referenceGeoref.wkt.length > 120 ? '…' : ''] })] })), residuals.length > 0 && (_jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("h3", { children: "Residuals" }), _jsx("table", { children: _jsx("tbody", { children: residuals.map((r) => (_jsxs("tr", { children: [_jsx("td", { children: r.id }), _jsx("td", { children: r.r.toFixed(2) })] }, r.id))) }) })] })), _jsxs("h3", { children: ["Pairs (", constraints.length, ")"] }), _jsx("ol", { style: { maxHeight: 200, overflow: 'auto' }, children: constraints.map((c) => (_jsxs("li", { children: ["src ", formattedPairs[c.id]?.src || `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`, " \u2192 dst ", formattedPairs[c.id]?.dst || `${c.dst[0].toFixed(1)}, ${c.dst[1].toFixed(1)}`] }, c.id))) })] }), _jsxs("div", { className: "status-bar", children: [referenceGeoref?.wkt ? `Ref CRS: ${referenceGeoref.wkt.substring(0, 60)}...` : 'No Ref CRS', _jsx("span", { style: { marginLeft: 'auto' }, children: cursorCoords })] })] }));
+                        }, points: constraints.map((p) => ({ x: p.dst[0], y: p.dst[1], color: '#64d2ff' })) })] }), _jsxs("div", { className: "side-panel", children: [_jsxs("h2", { children: ["Controls ", isDev && _jsxs("small", { style: { opacity: 0.6, fontWeight: 'normal' }, children: ["(build ", buildTag, ")"] })] }), _jsxs("div", { style: { display: 'flex', gap: 8, marginBottom: 8 }, children: [_jsx("button", { onClick: pickMap, children: "Load Map TIFF" }), _jsx("button", { onClick: pickReference, children: "Load Reference TIFF" })] }), isDev && (_jsxs("div", { style: { display: 'flex', gap: 8, marginBottom: 8 }, children: [_jsx("button", { onClick: () => { downloadLogs(); }, children: "Download Logs" }), _jsx("button", { onClick: () => { clearLogs(); }, children: "Clear Logs" }), _jsx("button", { onClick: () => { const en = !isLoggingEnabled(); setLoggingEnabled(en); }, children: "Toggle Logging" }), _jsx("button", { onClick: async () => {
+                                    try {
+                                        const payload = JSON.stringify({ when: new Date().toISOString(), note: 'manual save', logs: getLogs() });
+                                        const path = (await invoke('save_debug_log', { data: payload, filename: null }));
+                                        setLastLogPath(path);
+                                        alert(`Saved debug log to:\n${path}`);
+                                    }
+                                    catch (e) {
+                                        alert(`Failed to save debug log: ${e}`);
+                                    }
+                                }, children: "Save Logs" })] })), _jsxs("div", { style: { display: 'flex', gap: 8, marginBottom: 8 }, children: [_jsx("button", { onClick: () => solve('similarity'), disabled: constraints.length < 2, children: "Solve Similarity" }), _jsx("button", { onClick: () => solve('affine'), disabled: constraints.length < 3, children: "Solve Affine" }), _jsx("button", { onClick: exportWorld, disabled: !solution, children: "Export World File" }), _jsx("button", { onClick: copyProj, disabled: !solution, children: "Copy PROJ" })] }), _jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("label", { htmlFor: "errorUnit", children: "Error Units:" }), _jsxs("select", { id: "errorUnit", value: errorUnit, onChange: (e) => setErrorUnit(e.target.value), children: [_jsx("option", { value: "pixels", children: "Pixels" }), _jsx("option", { value: "meters", children: "Meters" }), _jsx("option", { value: "mapmm", children: "Map Millimeters" })] }), errorUnit === 'mapmm' && (_jsx("input", { type: "number", placeholder: "Map Scale (e.g., 10000)", value: mapScale || '', onChange: (e) => setMapScale(e.target.value ? parseFloat(e.target.value) : null) }))] }), _jsx("div", { style: { marginBottom: 8 }, children: _jsxs("label", { children: [_jsx("input", { type: "checkbox", checked: globalOnly, onChange: (e) => setGlobalOnly(e.target.checked) }), " Global only"] }) }), _jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("label", { htmlFor: "coordFormat", children: "Coordinate format:" }), ' ', _jsxs("select", { id: "coordFormat", value: coordFormat, onChange: (e) => setCoordFormat(e.target.value), children: [_jsx("option", { value: "pixels", children: "Pixels" }), _jsx("option", { value: "lonlat", children: "Lon/Lat (deg)" }), _jsx("option", { value: "local_m", children: "Local meters (AEQD)" }), _jsx("option", { value: "utm", children: "Projected meters (UTM)" })] })] }), _jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("label", { htmlFor: "datumPolicy", children: "Output CRS Policy:" }), _jsxs("select", { id: "datumPolicy", value: datumPolicy, onChange: (e) => setDatumPolicy(e.target.value), children: [_jsx("option", { value: "WGS84", children: "WGS 84" }), _jsx("option", { value: "NAD83_2011", children: "NAD83(2011)" })] })] }), _jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("strong", { children: "Status: " }), constraints.length < 2 && 'Add ≥2 pairs for similarity', constraints.length >= 2 && constraints.length < 3 && 'Add ≥3 for affine', constraints.length >= 3 && 'Ready to solve'] }), solution && (_jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("strong", { children: "Solution:" }), " ", solution.method, " | RMSE ", solution.rmse.toFixed(3), " | P90 ", solution.p90.toFixed(3)] })), referenceGeoref && (_jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("h3", { children: "Reference Georeferencing" }), _jsxs("p", { children: ["Affine: [", referenceGeoref.affine.map(a => a.toFixed(3)).join(', '), "]"] }), suggestedCrs && _jsxs("p", { children: ["Suggested output CRS: ", suggestedCrs.name] }), referenceGeoref.wkt && _jsxs("p", { children: ["CRS (PRJ): ", referenceGeoref.wkt.substring(0, 120), referenceGeoref.wkt.length > 120 ? '…' : ''] })] })), residuals.length > 0 && (_jsxs("div", { style: { marginBottom: 8 }, children: [_jsx("h3", { children: "Residuals" }), _jsx("table", { children: _jsx("tbody", { children: residuals.map((r) => (_jsxs("tr", { children: [_jsx("td", { children: r.id }), _jsx("td", { children: r.r.toFixed(2) })] }, r.id))) }) })] })), _jsxs("h3", { children: ["Pairs (", constraints.length, ")"] }), _jsx("ol", { style: { maxHeight: 200, overflow: 'auto' }, children: constraints.map((c) => (_jsxs("li", { children: ["src ", formattedPairs[c.id]?.src || `${c.src[0].toFixed(1)}, ${c.src[1].toFixed(1)}`, " \u2192 dst ", formattedPairs[c.id]?.dst || `${c.dst[0].toFixed(1)}, ${c.dst[1].toFixed(1)}`] }, c.id))) })] }), _jsxs("div", { className: "status-bar", children: [referenceGeoref?.wkt ? `Ref CRS: ${referenceGeoref.wkt.substring(0, 60)}...` : 'No Ref CRS', _jsx("span", { style: { marginLeft: 'auto' }, children: cursorCoords }), isDev && lastLogPath && _jsxs("span", { style: { marginLeft: 12, opacity: 0.7 }, children: ["Log: ", lastLogPath] })] })] }));
 }
 export default App;

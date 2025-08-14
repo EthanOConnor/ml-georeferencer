@@ -14,6 +14,14 @@ dist/
 build/
 **/build/
 
+# Prevent TS build output in source tree from being tracked
+apps/desktop/src/**/*.js
+apps/desktop/src/**/*.js.map
+apps/desktop/src/**/*.d.ts
+
+# Desktop runtime/debug data
+apps/desktop/data/
+
 # Tauri (generated files)
 **/src-tauri/gen/
 

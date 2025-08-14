@@ -392,6 +392,7 @@ fn main() {
             pixel_to,
             pixel_to_projected,
             metric_scale_at,
+            save_debug_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -519,6 +520,30 @@ struct EpsgSuggestion {
     datum: String,
     zone: Option<i32>,
     notice: Option<String>,
+}
+
+#[tauri::command]
+fn save_debug_log(data: String, filename: Option<String>) -> Result<String, String> {
+    use std::fs;
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Save under apps/desktop/data/debug relative to src-tauri CWD
+    let mut dir = std::env::current_dir().map_err(|e| e.to_string())?;
+    dir.push("../data/debug");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let name = if let Some(f) = filename { f } else {
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs();
+        format!("ml-georeferencer-debug-{}.json", ts)
+    };
+    let path: PathBuf = dir.join(name);
+
+    let mut file = fs::File::create(&path).map_err(|e| e.to_string())?;
+    file.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+
+    Ok(path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
