@@ -394,7 +394,7 @@ function App() {
           metersPerPixel={refMetersPerPixel || 0}
           resetOnImageLoad={zoomToFitOnLoad}
           resetKey={resetKeyRef}
-           dotRadiusPx={dotRadius}
+          dotRadiusPx={dotRadius}
           view={activeView === 'ref' ? undefined : (refView || undefined)}
           onViewChange={(v) => setRefView(v)}
           onInteraction={(e) => {
@@ -409,6 +409,14 @@ function App() {
             }
           }}
           onInfo={(info) => { refInfoRef.current = info; }}
+          onOutlineDrag={(x, y) => setRefPreviewOverride({ x, y })}
+          onOutlineDrop={(x, y) => {
+            if (pendingSrc) {
+              addPair(pendingSrc, [x, y]);
+              setPendingSrc(null);
+              setRefPreviewOverride(null);
+            }
+          }}
           onImageMouseMove={async (x, y) => {
             rightLast.current = { x, y };
             cancelAnimationFrame(rightMoveRAF.current);
@@ -431,7 +439,7 @@ function App() {
             }
           }}
           points={constraints.map((p) => ({ x: p.dst[0], y: p.dst[1], color: '#64d2ff' }))}
-          outlinePreview={pendingSrc ? (() => { const m = mapToRef(pendingSrc[0], pendingSrc[1]); return m ? { x: m.x, y: m.y, color: '#ffffff' } : undefined; })() : undefined}
+          outlinePreview={pendingSrc ? (refPreviewOverride || (() => { const m = mapToRef(pendingSrc[0], pendingSrc[1]); return m ? { x: m.x, y: m.y, color: '#ffffff' } : undefined; })()) : undefined}
         />
       </div>
       <div className="side-panel">

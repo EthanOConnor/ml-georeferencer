@@ -392,6 +392,29 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
+    const parent = containerRef.current;
+    if (!parent) return;
+    const rect = parent.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    lastCursorCssRef.current = { x: sx, y: sy };
+    if (outlinePreview && img) {
+      const { width, height } = containerSize;
+      const scale = fitScale * zoomRef.current;
+      const drawW = img.width * scale;
+      const drawH = img.height * scale;
+      const offX = (width - drawW) / 2 + panRef.current.x;
+      const offY = (height - drawH) / 2 + panRef.current.y;
+      const sxCss = offX + outlinePreview.x * scale;
+      const syCss = offY + outlinePreview.y * scale;
+      const r = (dotRadiusPx || 5) * 1.6;
+      const dist2 = (sx - sxCss) * (sx - sxCss) + (sy - syCss) * (sy - syCss);
+      if (dist2 <= (r + 8) * (r + 8)) {
+        draggingOutlineRef.current = true;
+        dragMoved.current = false;
+        return;
+      }
+    }
     dragging.current = true;
     lastPos.current = { x: e.clientX, y: e.clientY };
     dragMoved.current = false;
@@ -406,6 +429,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
     const rect = parent.getBoundingClientRect();
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
+    lastCursorCssRef.current = { x: sx, y: sy };
 
     if (img && onImageMouseMove) {
       const scale = fitScale * zoomRef.current;
@@ -419,6 +443,19 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
       if (ix >= 0 && iy >= 0 && ix <= img.width && iy <= img.height) {
         onImageMouseMove(ix, iy);
       }
+    }
+
+    if (draggingOutlineRef.current && onOutlineDrag && img) {
+      const { width, height } = containerSize;
+      const scale = fitScale * zoomRef.current;
+      const drawW = img.width * scale;
+      const drawH = img.height * scale;
+      const offX = (width - drawW) / 2 + panRef.current.x;
+      const offY = (height - drawH) / 2 + panRef.current.y;
+      const ix = (sx - offX) / scale;
+      const iy = (sy - offY) / scale;
+      onOutlineDrag(ix, iy);
+      return;
     }
 
     if (!dragging.current || !lastPos.current) return;
@@ -448,7 +485,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
           panRef.current = { x: panRef.current.x + dx, y: panRef.current.y + dy };
           log('pan_drag', { dx, dy, next: panRef.current });
           if (onViewChange) onViewChange({ zoom: zoomRef.current, pan: { ...panRef.current } });
-          if (onInteraction) onInteraction({ type: 'pan', dx, dy });
+          if (onInteraction) onInteraction({ type: 'pan', dx, dy, anchorCss: lastCursorCssRef.current });
           draw();
         }
       });
@@ -456,6 +493,20 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
   };
 
   const onPointerUp = () => {
+    if (draggingOutlineRef.current && onOutlineDrop && img) {
+      draggingOutlineRef.current = false;
+      const { width, height } = containerSize;
+      const scale = fitScale * zoomRef.current;
+      const drawW = img.width * scale;
+      const drawH = img.height * scale;
+      const offX = (width - drawW) / 2 + panRef.current.x;
+      const offY = (height - drawH) / 2 + panRef.current.y;
+      const { x: sx, y: sy } = lastCursorCssRef.current;
+      const ix = (sx - offX) / scale;
+      const iy = (sy - offY) / scale;
+      onOutlineDrop(ix, iy);
+      return;
+    }
     dragging.current = false;
     lastPos.current = null;
     log('pointer_up', {});
@@ -560,7 +611,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
       }
 
       // Immediate visual feedback via DOM overlay (constant screen size, not cleared by redraws)
-      setOverlayDot({ x: sx, y: sy, color: '#ff375f' });
+      setOverlayDot({ x: ix, y: iy, color: '#ff375f' });
       // Also keep a transient image-space point for the next draw (for offscreen path consistency)
       transientPtsRef.current = [{ x: ix, y: iy, color: '#ff375f' }];
       // Treat click as interaction for one frame (disable grid, lower smoothing)
