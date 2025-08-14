@@ -24,6 +24,8 @@ function App() {
   const [datumPolicy, setDatumPolicy] = useState<'WGS84' | 'NAD83_2011'>('WGS84');
   const [cursorCoords, setCursorCoords] = useState<string>('');
   const coordUpdateRef = useRef(0);
+  const rightMoveRAF = useRef(0);
+  const rightLast = useRef<{ x: number; y: number } | null>(null);
   const [lastLogPath, setLastLogPath] = useState<string>('');
 
   // Global wheel observer to detect unintended wheel inputs
@@ -221,8 +223,18 @@ function App() {
           metersPerPixel={refMetersPerPixel || 0}
           showCrosshair
           onMouseMove={async (x, y) => {
-            const coords = await invoke('pixel_to', { u: x, v: y, mode: coordFormat });
-            updateCursorCoords(coords);
+            rightLast.current = { x, y };
+            cancelAnimationFrame(rightMoveRAF.current);
+            rightMoveRAF.current = requestAnimationFrame(async () => {
+              const last = rightLast.current;
+              if (!last) return;
+              try {
+                const coords = await invoke('pixel_to', { u: last.x, v: last.y, mode: coordFormat });
+                updateCursorCoords(coords);
+              } catch (e) {
+                // ignore
+              }
+            });
           }}
           onClickImage={(x, y) => {
             if (pendingSrc) {
