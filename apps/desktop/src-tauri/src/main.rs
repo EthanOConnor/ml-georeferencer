@@ -78,8 +78,8 @@ fn set_map_path(path: String, state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn set_reference_path(path: String, state: State<AppState>) -> Result<(), String> {
-    // Try robust world/prj sidecars, then GeoTIFF tags
-    let georef = io::read_georeferencing_for_image(&path).map_err(|e| e.to_string())?;
+    // Try robust world/prj sidecars, then GeoTIFF tags; tolerate parsing errors
+    let georef = io::read_georeferencing_for_image(&path).ok().flatten();
     *state.ref_georef.lock().map_err(|e| e.to_string())? = georef;
     *state.reference_path.lock().map_err(|e| e.to_string())? = Some(path);
     Ok(())

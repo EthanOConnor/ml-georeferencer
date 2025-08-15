@@ -81,25 +81,45 @@ function App() {
   };
 
   async function pickMap() {
-    const path = await open({ multiple: false, filters: [
-      { name: 'Raster', extensions: ['tif', 'tiff', 'png', 'jpg', 'jpeg'] }
-    ] });
-    if (typeof path === 'string') {
-      setMapPath(path);
-      await invoke('set_map_path', { path });
-      const data: string = await invoke('load_raster_data', { path });
-      setMapImg(data);
+    try {
+      const path = await open({ multiple: false, filters: [
+        { name: 'Raster', extensions: ['tif', 'tiff', 'png', 'jpg', 'jpeg'] }
+      ] });
+      if (typeof path === 'string') {
+        console.log('[map] chosen:', path);
+        setMapPath(path);
+        await invoke('set_map_path', { path });
+        console.log('[map] set_map_path OK');
+        const data: string = await invoke('load_raster_data', { path });
+        console.log('[map] load_raster_data OK, bytes:', data?.length || 0);
+        setMapImg(data);
+      }
+    } catch (e) {
+      console.error('[map] failed:', e);
+      alert(`Failed to load map: ${e}`);
     }
   }
   async function pickReference() {
-    const path = await open({ multiple: false, filters: [
-      { name: 'Raster', extensions: ['tif', 'tiff', 'png', 'jpg', 'jpeg'] }
-    ] });
-    if (typeof path === 'string') {
-      setRefPath(path);
-      await invoke('set_reference_path', { path });
-      const data: string = await invoke('load_raster_data', { path });
-      setRefImg(data);
+    try {
+      const path = await open({ multiple: false, filters: [
+        { name: 'Raster', extensions: ['tif', 'tiff', 'png', 'jpg', 'jpeg'] }
+      ] });
+      if (typeof path === 'string') {
+        console.log('[reference] chosen:', path);
+        setRefPath(path);
+        await invoke('set_reference_path', { path });
+        console.log('[reference] set_reference_path OK');
+        const data: string = await invoke('load_raster_data', { path });
+        console.log('[reference] load_raster_data OK, bytes:', data?.length || 0);
+        setRefImg(data);
+        try {
+          const geo = await invoke('get_reference_georef');
+          console.log('[reference] georef:', geo);
+        } catch {}
+      }
+    } catch (e) {
+      console.error('[reference] failed:', e);
+      alert(`Failed to load reference: ${e}`);
     }
   }
 
