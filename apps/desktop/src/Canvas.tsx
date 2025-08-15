@@ -23,12 +23,14 @@ type Props = {
   metersPerPixel?: number; // image m per px at current view (approx)
   dotRadiusPx?: number; // base radius in CSS px
   outlinePreview?: { x: number; y: number; color?: string } | undefined;
+  onOutlineDrag?: (x: number, y: number) => void;
+  onOutlineDrop?: (x: number, y: number) => void;
   labels?: { x: number; y: number; text: string; color?: string }[];
   showCrosshair?: boolean;
   canvasProps?: React.CanvasHTMLAttributes<HTMLCanvasElement>;
 };
 
-const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, onImageMouseMove, view, onViewChange, onInteraction, onInfo, resetOnImageLoad = true, resetKey, points = [], metersPerPixel, dotRadiusPx, outlinePreview, labels = [], showCrosshair = false, canvasProps }) => {
+const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, onImageMouseMove, view, onViewChange, onInteraction, onInfo, resetOnImageLoad = true, resetKey, points = [], metersPerPixel, dotRadiusPx, outlinePreview, onOutlineDrag, onOutlineDrop, labels = [], showCrosshair = false, canvasProps }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const offscreenRef = useRef<OffscreenCanvas | null>(null);
   const offscreenCapableRef = useRef<boolean | null>(null);
@@ -36,6 +38,8 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   const zoomRef = useRef(1);
   const panRef = useRef({ x: 0, y: 0 });
+  const lastCursorCssRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const draggingOutlineRef = useRef<boolean>(false);
   const [fitScale, setFitScale] = useState(1);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const dragging = useRef(false);
@@ -62,7 +66,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
     if (!imageData) { setImg(null); return; }
     const im = new Image();
     im.src = imageData;
-    im.onload = () => { 
+    im.onload = () => {
       log('image_onload', { w: im.width, h: im.height, src_len: (im.src||'').length });
       setImg(im);
     };
@@ -401,10 +405,12 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
     // Only clear transient/overlay after the point is reflected in props
     if (transientPtsRef.current.length) {
       const t = transientPtsRef.current[0];
-      const found = points.some(p => Math.abs(p.x - t.x) < 0.5 && Math.abs(p.y - t.y) < 0.5);
-      if (found) {
-        transientPtsRef.current = [];
-        if (overlayDot) setOverlayDot(null);
+      if (t) {
+        const found = points.some(p => Math.abs(p.x - t.x) < 0.5 && Math.abs(p.y - t.y) < 0.5);
+        if (found) {
+          transientPtsRef.current = [];
+          if (overlayDot) setOverlayDot(null);
+        }
       }
     }
     draw();
@@ -508,7 +514,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
           panRef.current = { x: panRef.current.x + dx, y: panRef.current.y + dy };
           log('pan_drag', { dx, dy, next: panRef.current });
           if (onViewChange) onViewChange({ zoom: zoomRef.current, pan: { ...panRef.current } });
-          if (onInteraction) onInteraction({ type: 'pan', dx, dy, anchorCss: lastCursorCssRef.current });
+          if (onInteraction) onInteraction({ type: 'pan', dx, dy });
           draw();
         }
       });
@@ -577,8 +583,8 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
         if (onViewChange) onViewChange({ zoom: zoomRef.current, pan: { ...panRef.current } });
         if (onInteraction) onInteraction({ type: 'zoom', factor: accum, anchorCss: anchor });
         // restore quality next frame
-        requestAnimationFrame(() => { 
-          qualityRef.current = 'high'; 
+        requestAnimationFrame(() => {
+          qualityRef.current = 'high';
           if (interactTimer.current) cancelAnimationFrame(interactTimer.current);
           interactTimer.current = requestAnimationFrame(() => { interactingRef.current = false; draw(); });
         });
@@ -674,9 +680,9 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
           }}
         />
       )}
-      <canvas 
-        ref={canvasRef} 
-        style={{ width: '100%', height: '100%', background: '#000', touchAction: 'none' }} 
+      <canvas
+        ref={canvasRef}
+        style={{ width: '100%', height: '100%', background: '#000', touchAction: 'none' }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

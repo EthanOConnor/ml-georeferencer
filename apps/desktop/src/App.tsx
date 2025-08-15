@@ -109,6 +109,7 @@ function App() {
   const [mapView, setMapView] = useState<{ zoom: number; pan: { x: number; y: number } } | null>(null);
   const [refView, setRefView] = useState<{ zoom: number; pan: { x: number; y: number } } | null>(null);
   const [dotRadius, setDotRadius] = useState<number>(5);
+  const [refPreviewOverride, setRefPreviewOverride] = useState<{ x: number; y: number } | null>(null);
   const [activeView, setActiveView] = useState<'map' | 'ref' | null>(null);
   const activeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapInfoRef = useRef<{ fitScale: number; size: { width: number; height: number }; imgSize: { width: number; height: number } } | null>(null);
@@ -429,8 +430,8 @@ function App() {
             }
           }}
           onInfo={(info) => { refInfoRef.current = info; }}
-          onOutlineDrag={(x, y) => setRefPreviewOverride({ x, y })}
-          onOutlineDrop={(x, y) => {
+          onOutlineDrag={(x: number, y: number) => setRefPreviewOverride({ x, y })}
+          onOutlineDrop={(x: number, y: number) => {
             if (pendingSrc) {
               addPair(pendingSrc, [x, y]);
               setPendingSrc(null);
