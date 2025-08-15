@@ -23,11 +23,12 @@ type Props = {
   metersPerPixel?: number; // image m per px at current view (approx)
   dotRadiusPx?: number; // base radius in CSS px
   outlinePreview?: { x: number; y: number; color?: string } | undefined;
+  labels?: { x: number; y: number; text: string; color?: string }[];
   showCrosshair?: boolean;
   canvasProps?: React.CanvasHTMLAttributes<HTMLCanvasElement>;
 };
 
-const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, onImageMouseMove, view, onViewChange, onInteraction, onInfo, resetOnImageLoad = true, resetKey, points = [], metersPerPixel, dotRadiusPx, outlinePreview, showCrosshair = false, canvasProps }) => {
+const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, onImageMouseMove, view, onViewChange, onInteraction, onInfo, resetOnImageLoad = true, resetKey, points = [], metersPerPixel, dotRadiusPx, outlinePreview, labels = [], showCrosshair = false, canvasProps }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const offscreenRef = useRef<OffscreenCanvas | null>(null);
   const offscreenCapableRef = useRef<boolean | null>(null);
@@ -254,6 +255,28 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
       const syCss = offY + overlayDot.y * scale;
       overlayDotRef.current.style.left = `${sxCss}px`;
       overlayDotRef.current.style.top = `${syCss}px`;
+    }
+
+    // Labels
+    if (labels && labels.length > 0) {
+      context.save();
+      context.font = '12px ui-sans-serif, system-ui, sans-serif';
+      context.fillStyle = 'black';
+      context.strokeStyle = 'white';
+      context.lineWidth = 3;
+      for (const lab of labels) {
+        const sxCss = offX + lab.x * scale;
+        const syCss = offY + lab.y * scale;
+        const txt = lab.text;
+        if (hasOff) {
+          context.strokeText(txt, sxCss * dpr + 1, syCss * dpr - 4);
+          context.fillText(txt, sxCss * dpr + 1, syCss * dpr - 4);
+        } else {
+          (context as CanvasRenderingContext2D).strokeText(txt, sxCss + 1, syCss - 4);
+          (context as CanvasRenderingContext2D).fillText(txt, sxCss + 1, syCss - 4);
+        }
+      }
+      context.restore();
     }
 
     // Debug probe (throttled)

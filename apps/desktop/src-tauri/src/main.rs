@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::collections::HashMap;
 use std::sync::Mutex;
+use std::cell::RefCell;
 use tauri::State;
 use tauri_plugin_dialog;
 
@@ -12,6 +14,45 @@ struct AppState {
     reference_path: Mutex<Option<String>>,
     constraints: Mutex<Vec<ConstraintKind>>,
     ref_georef: Mutex<Option<io::Georef>>,
+}
+
+thread_local! {
+    static TL_TO_WGS84: RefCell<HashMap<String, proj::Proj>> = RefCell::new(HashMap::new());
+    static TL_UTM: RefCell<HashMap<(i32, bool, &'static str), proj::Proj>> = RefCell::new(HashMap::new());
+}
+
+fn convert_to_wgs84(crs: &str, x: f64, y: f64) -> Result<(f64, f64), String> {
+    TL_TO_WGS84.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        let key = crs.to_string();
+        let proj = cache.entry(key).or_insert_with(|| {
+            if crs.starts_with("EPSG:") || crs.trim_start().starts_with("+proj=") {
+                proj::Proj::new_known_crs(crs, "EPSG:4326", None).unwrap()
+            } else {
+                // Best effort: PROJ may accept WKT in known_crs; if not, this will error on first use.
+                proj::Proj::new_known_crs(crs, "EPSG:4326", None).unwrap()
+            }
+        });
+        proj.convert((x, y)).map_err(|e| e.to_string())
+    })
+}
+
+fn convert_to_utm(policy: &str, zone: i32, north: bool, lon: f64, lat: f64) -> Result<(f64, f64), String> {
+    let datum_key: &'static str = match policy { "NAD83_2011" => "NAD83_2011", _ => "WGS84" };
+    TL_UTM.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        let key = (zone, north, datum_key);
+        let proj = cache.entry(key).or_insert_with(|| {
+            match datum_key {
+                "NAD83_2011" => proj::Proj::new(&format!("+proj=utm +zone={} +ellps=GRS80 +units=m +no_defs +type=crs", zone)).unwrap(),
+                _ => {
+                    let epsg = if north { format!("EPSG:326{}", zone) } else { format!("EPSG:327{}", zone) };
+                    proj::Proj::new_known_crs("EPSG:4326", &epsg, None).unwrap()
+                }
+            }
+        });
+        proj.convert((lon, lat)).map_err(|e| e.to_string())
+    })
 }
 
 #[tauri::command]
@@ -418,11 +459,7 @@ fn _convert_reference_pixel(
         "lonlat" => {
             let world = io::pixel_to_world(&geo, [px, py]);
             if let Some(wkt) = &geo.wkt {
-                let to_wgs84 =
-                    proj::Proj::new_known_crs(wkt, "EPSG:4326", None).map_err(|e| e.to_string())?;
-                let (lon, lat) = to_wgs84
-                    .convert((world[0], world[1]))
-                    .map_err(|e| e.to_string())?;
+                let (lon, lat) = convert_to_wgs84(wkt, world[0], world[1])?;
                 Ok(Some([lon, lat]))
             } else {
                 Ok(None)
@@ -453,25 +490,13 @@ fn _convert_reference_pixel(
                 let zone = (((lon + 180.0) / 6.0).floor() as i32).clamp(1, 60);
                 match policy {
                     "NAD83_2011" => {
-                        let to_utm = proj::Proj::new(&format!(
-                            "+proj=utm +zone={} +ellps=GRS80 +units=m +no_defs +type=crs",
-                            zone
-                        ))
-                        .map_err(|e| e.to_string())?;
-                        let (x, y) = to_utm.convert((lon, lat)).map_err(|e| e.to_string())?;
+                        let (x, y) = convert_to_utm(policy, zone, true, lon, lat)?;
                         Ok(Some([x, y]))
                     }
                     _ => {
                         // WGS84
                         let north = lat >= 0.0;
-                        let epsg = if north {
-                            format!("EPSG:326{}", zone)
-                        } else {
-                            format!("EPSG:327{}", zone)
-                        };
-                        let to_utm = proj::Proj::new_known_crs("EPSG:4326", &epsg, None)
-                            .map_err(|e| e.to_string())?;
-                        let (x, y) = to_utm.convert((lon, lat)).map_err(|e| e.to_string())?;
+                        let (x, y) = convert_to_utm("WGS84", zone, north, lon, lat)?;
                         Ok(Some([x, y]))
                     }
                 }
@@ -612,11 +637,7 @@ fn suggest_output_epsg(
     let (w, h) = io::image_dimensions(&ref_path).map_err(|e| e.to_string())?;
     if let Some(wkt) = &geo.wkt {
         let world = io::pixel_to_world(&geo, [(w as f64) / 2.0, (h as f64) / 2.0]);
-        let to_wgs84 =
-            proj::Proj::new_known_crs(wkt, "EPSG:4326", None).map_err(|e| e.to_string())?;
-        let (lon, lat) = to_wgs84
-            .convert((world[0], world[1]))
-            .map_err(|e| e.to_string())?;
+        let (lon, lat) = convert_to_wgs84(wkt, world[0], world[1])?;
         let zone = (((lon + 180.0) / 6.0).floor() as i32).clamp(1, 60);
         match policy.as_str() {
             "NAD83_2011" => {
@@ -683,11 +704,11 @@ fn pixels_to(mode: String, pts: Vec<[f64; 2]>, state: State<AppState>) -> Result
     match mode.as_str() {
         "lonlat" => {
             if let Some(wkt) = &geo.wkt {
-                let to_wgs84 = proj::Proj::new_known_crs(wkt, "EPSG:4326", None)
-                    .map_err(|e| e.to_string())?;
+                // cached per-thread
+                let to_wgs84_crs = wkt.clone();
                 for [u, v] in pts {
                     let world = io::pixel_to_world(&geo, [u, v]);
-                    let (lon, lat) = to_wgs84.convert((world[0], world[1])).map_err(|e| e.to_string())?;
+                    let (lon, lat) = convert_to_wgs84(&to_wgs84_crs, world[0], world[1])?;
                     out.push(Some(XY { x: lon, y: lat }));
                 }
             } else {
@@ -741,25 +762,16 @@ fn pixels_to_projected(
         None => return Ok(vec![None; pts.len()]),
     };
     let Some(wkt) = &geo.wkt else { return Ok(vec![None; pts.len()]); };
-    let to_wgs84 = proj::Proj::new_known_crs(wkt, "EPSG:4326", None).map_err(|e| e.to_string())?;
-    let mut cache: HashMap<(i32, bool), proj::Proj> = HashMap::new();
+    let mut cache: HashMap<(i32, bool), ()> = HashMap::new();
     let mut out = Vec::with_capacity(pts.len());
     for [u, v] in pts {
         let world = io::pixel_to_world(&geo, [u, v]);
-        let (lon, lat) = to_wgs84.convert((world[0], world[1])).map_err(|e| e.to_string())?;
+        let (lon, lat) = convert_to_wgs84(wkt, world[0], world[1])?;
         let zone = (((lon + 180.0) / 6.0).floor() as i32).clamp(1, 60);
         let north = lat >= 0.0;
         let key = (zone, north);
-        let prj = cache.entry(key).or_insert_with(|| {
-            match policy.as_str() {
-                "NAD83_2011" => proj::Proj::new(&format!("+proj=utm +zone={} +ellps=GRS80 +units=m +no_defs +type=crs", zone)).unwrap(),
-                _ => {
-                    let epsg = if north { format!("EPSG:326{}", zone) } else { format!("EPSG:327{}", zone) };
-                    proj::Proj::new_known_crs("EPSG:4326", &epsg, None).unwrap()
-                }
-            }
-        });
-        let (x, y) = prj.convert((lon, lat)).map_err(|e| e.to_string())?;
+        if !cache.contains_key(&key) { cache.insert(key, ()); }
+        let (x, y) = convert_to_utm(&policy, zone, north, lon, lat)?;
         out.push(Some(XY { x, y }));
     }
     Ok(out)

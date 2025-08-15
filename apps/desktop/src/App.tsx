@@ -15,6 +15,7 @@ function App() {
   const [pendingSrc, setPendingSrc] = useState<[number, number] | null>(null);
   const [solution, setSolution] = useState<{ method: 'similarity' | 'affine'; t: OverlayTransform; rmse: number; p90: number } | null>(null);
   const [residuals, setResiduals] = useState<{ id: number; r: number }[]>([]);
+  const [autoSolve, setAutoSolve] = useState(true);
   const [globalOnly, setGlobalOnly] = useState(true);
   const [errorUnit, setErrorUnit] = useState<'pixels' | 'meters' | 'mapmm'>('pixels');
   const [mapScale, setMapScale] = useState<number | null>(null);
@@ -80,7 +81,9 @@ function App() {
   };
 
   async function pickMap() {
-    const path = await open({ multiple: false, filters: [{ name: 'TIFF', extensions: ['tif', 'tiff'] }] });
+    const path = await open({ multiple: false, filters: [
+      { name: 'Raster', extensions: ['tif', 'tiff', 'png', 'jpg', 'jpeg'] }
+    ] });
     if (typeof path === 'string') {
       setMapPath(path);
       await invoke('set_map_path', { path });
@@ -89,7 +92,9 @@ function App() {
     }
   }
   async function pickReference() {
-    const path = await open({ multiple: false, filters: [{ name: 'TIFF', extensions: ['tif', 'tiff'] }] });
+    const path = await open({ multiple: false, filters: [
+      { name: 'Raster', extensions: ['tif', 'tiff', 'png', 'jpg', 'jpeg'] }
+    ] });
     if (typeof path === 'string') {
       setRefPath(path);
       await invoke('set_reference_path', { path });
@@ -333,6 +338,17 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [errorUnit, mapScale]);
 
+  // Auto-solve with debounce when constraints change
+  useEffect(() => {
+    if (!autoSolve) return;
+    const h = setTimeout(() => {
+      if (constraints.length >= 3) solve('affine');
+      else if (constraints.length >= 2) solve('similarity');
+    }, 200);
+    return () => clearTimeout(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [constraints, autoSolve]);
+
   async function exportWorld() {
     if (!mapPath || !solution) return;
     const base = mapPath.replace(/\.[^.]+$/, '');
@@ -395,6 +411,10 @@ function App() {
           resetOnImageLoad={zoomToFitOnLoad}
           resetKey={resetKeyRef}
           dotRadiusPx={dotRadius}
+          labels={constraints.map(c => {
+            const r = residuals.find(x => x.id === c.id)?.r;
+            return r != null ? { x: c.dst[0], y: c.dst[1], text: `${r.toFixed(2)}` } : { x: c.dst[0], y: c.dst[1], text: '' };
+          })}
           view={activeView === 'ref' ? undefined : (refView || undefined)}
           onViewChange={(v) => setRefView(v)}
           onInteraction={(e) => {
