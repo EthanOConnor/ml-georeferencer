@@ -18,7 +18,7 @@ These commands are implemented in `apps/desktop/src-tauri/src/main.rs`:
   - Set the current map image path. Stored in state only.
 
 - `set_reference_path(path: string) -> void`
-  - Set the reference image path. Also attempts to read reference georeferencing (world file and optional PRJ).
+  - Set the reference image path. Attempts robust sidecar detection (`.tfw`/`.jgw`/`.pgw`/`.gfw`/`.bpw` and `.wld`) plus `.prj`; falls back to TIFF/GeoTIFF tags (ModelTransformation or PixelScale+Tiepoint) and GeoKeys (EPSG) when applicable.
 
 - `load_raster_data(path: string) -> string`
   - Load a raster file and return a `data:image/png;base64,...` URI for UI rendering.

@@ -2367,6 +2367,7 @@ dependencies = [
  "proj",
  "serde",
  "thiserror 1.0.69",
+ "tiff",
 ]
 
 [[package]]

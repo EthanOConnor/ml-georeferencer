@@ -22,11 +22,9 @@ fn set_map_path(path: String, state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn set_reference_path(path: String, state: State<AppState>) -> Result<(), String> {
-    let base = std::path::Path::new(&path)
-        .with_extension("")
-        .to_string_lossy()
-        .into_owned();
-    let georef = io::read_georeferencing(&base).ok();
+    // Try robust world/prj sidecars, then GeoTIFF tags
+    let georef = io::read_georeferencing_for_image(&path)
+        .map_err(|e| e.to_string())?;
     *state.ref_georef.lock().map_err(|e| e.to_string())? = georef;
     *state.reference_path.lock().map_err(|e| e.to_string())? = Some(path);
     Ok(())
@@ -500,18 +498,63 @@ fn get_reference_crs(state: State<AppState>) -> Result<Option<CrsInfo>, String> 
         Some(v) => v,
         None => return Ok(None),
     };
-    let name = g
-        .wkt
-        .as_ref()
-        .and_then(|w| w.splitn(2, '[').next())
-        .unwrap_or("Unknown")
-        .to_string();
-    Ok(Some(CrsInfo {
-        name,
-        code: None,
-        proj: None,
-        wkt: g.wkt,
-    }))
+    let (name, code, proj) = match &g.wkt {
+        Some(s) if s.starts_with("EPSG:") => {
+            let code = s.clone();
+            let human = human_readable_epsg(&code);
+            let proj = proj_for_epsg(&code);
+            (human, Some(code), proj)
+        }
+        Some(wkt) => {
+            let human = extract_wkt_name(wkt).unwrap_or_else(|| "Unknown".into());
+            (human, None, None)
+        }
+        None => ("Unknown".into(), None, None),
+    };
+    Ok(Some(CrsInfo { name, code, proj, wkt: g.wkt }))
+}
+
+fn extract_wkt_name(wkt: &str) -> Option<String> {
+    // Grab the first quoted name token, e.g., GEOGCS["WGS 84", ...]
+    let bytes = wkt.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'"' {
+            let start = i + 1;
+            let mut j = start;
+            while j < bytes.len() && bytes[j] != b'"' { j += 1; }
+            if j < bytes.len() {
+                return Some(wkt[start..j].to_string());
+            }
+            break;
+        }
+        i += 1;
+    }
+    None
+}
+
+fn human_readable_epsg(code: &str) -> String {
+    // code like "EPSG:4326"
+    let n: i32 = code.strip_prefix("EPSG:").and_then(|s| s.parse().ok()).unwrap_or(-1);
+    match n {
+        4326 => "WGS 84".into(),
+        3857 => "WGS 84 / Pseudo-Mercator".into(),
+        4269 => "NAD83".into(),
+        32601..=32660 => format!("WGS 84 / UTM zone {}N", n - 32600),
+        32701..=32760 => format!("WGS 84 / UTM zone {}S", n - 32700),
+        _ => code.to_string(),
+    }
+}
+
+fn proj_for_epsg(code: &str) -> Option<String> {
+    let n: i32 = code.strip_prefix("EPSG:").and_then(|s| s.parse().ok()).unwrap_or(-1);
+    match n {
+        32601..=32660 => Some(format!("+proj=utm +zone={} +datum=WGS84 +units=m +no_defs +type=crs", n - 32600)),
+        32701..=32760 => Some(format!("+proj=utm +zone={} +south +datum=WGS84 +units=m +no_defs +type=crs", n - 32700)),
+        3857 => Some("+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext +no_defs +type=crs".into()),
+        4326 => Some("+proj=longlat +datum=WGS84 +no_defs +type=crs".into()),
+        _ => None,
+    }
 }
 
 #[derive(serde::Serialize)]
