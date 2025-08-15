@@ -502,6 +502,9 @@ function App() {
           <button onClick={() => solve('affine')} disabled={constraints.length < 3}>Solve Affine</button>
           <button onClick={exportWorld} disabled={!solution}>Export World File</button>
           <button onClick={copyProj} disabled={!solution}>Copy PROJ</button>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 12 }}>
+            <input type="checkbox" checked={autoSolve} onChange={(e) => setAutoSolve(e.target.checked)} /> Auto-solve
+          </label>
         </div>
         <div style={{ marginBottom: 8 }}>
           <label htmlFor="errorUnit">Error Units:</label>
