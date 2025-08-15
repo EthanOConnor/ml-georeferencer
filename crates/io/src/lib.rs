@@ -113,9 +113,6 @@ pub fn read_geotiff_georeferencing(tiff_path: &str) -> Result<Option<Georef>> {
         // Try best-effort: not all tiff versions expose this; ignore errors.
         dec.get_tag_f64_vec(tag).ok()
     }
-    fn read_u16_vec(dec: &mut Decoder<std::fs::File>, tag: Tag) -> Option<Vec<u16>> {
-        dec.get_tag_u16_vec(tag).ok()
-    }
     // Try transformation first
     let transform = read_f64_vec(&mut dec, Tag::Unknown(34264));
     if let Some(m) = transform {

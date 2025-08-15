@@ -1,8 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::cell::RefCell;
 use tauri::State;
 use tauri_plugin_dialog;
 
@@ -37,18 +37,33 @@ fn convert_to_wgs84(crs: &str, x: f64, y: f64) -> Result<(f64, f64), String> {
     })
 }
 
-fn convert_to_utm(policy: &str, zone: i32, north: bool, lon: f64, lat: f64) -> Result<(f64, f64), String> {
-    let datum_key: &'static str = match policy { "NAD83_2011" => "NAD83_2011", _ => "WGS84" };
+fn convert_to_utm(
+    policy: &str,
+    zone: i32,
+    north: bool,
+    lon: f64,
+    lat: f64,
+) -> Result<(f64, f64), String> {
+    let datum_key: &'static str = match policy {
+        "NAD83_2011" => "NAD83_2011",
+        _ => "WGS84",
+    };
     TL_UTM.with(|cell| {
         let mut cache = cell.borrow_mut();
         let key = (zone, north, datum_key);
-        let proj = cache.entry(key).or_insert_with(|| {
-            match datum_key {
-                "NAD83_2011" => proj::Proj::new(&format!("+proj=utm +zone={} +ellps=GRS80 +units=m +no_defs +type=crs", zone)).unwrap(),
-                _ => {
-                    let epsg = if north { format!("EPSG:326{}", zone) } else { format!("EPSG:327{}", zone) };
-                    proj::Proj::new_known_crs("EPSG:4326", &epsg, None).unwrap()
-                }
+        let proj = cache.entry(key).or_insert_with(|| match datum_key {
+            "NAD83_2011" => proj::Proj::new(&format!(
+                "+proj=utm +zone={} +ellps=GRS80 +units=m +no_defs +type=crs",
+                zone
+            ))
+            .unwrap(),
+            _ => {
+                let epsg = if north {
+                    format!("EPSG:326{}", zone)
+                } else {
+                    format!("EPSG:327{}", zone)
+                };
+                proj::Proj::new_known_crs("EPSG:4326", &epsg, None).unwrap()
             }
         });
         proj.convert((lon, lat)).map_err(|e| e.to_string())
@@ -64,8 +79,7 @@ fn set_map_path(path: String, state: State<AppState>) -> Result<(), String> {
 #[tauri::command]
 fn set_reference_path(path: String, state: State<AppState>) -> Result<(), String> {
     // Try robust world/prj sidecars, then GeoTIFF tags
-    let georef = io::read_georeferencing_for_image(&path)
-        .map_err(|e| e.to_string())?;
+    let georef = io::read_georeferencing_for_image(&path).map_err(|e| e.to_string())?;
     *state.ref_georef.lock().map_err(|e| e.to_string())? = georef;
     *state.reference_path.lock().map_err(|e| e.to_string())? = Some(path);
     Ok(())
@@ -536,7 +550,12 @@ fn get_reference_crs(state: State<AppState>) -> Result<Option<CrsInfo>, String> 
         }
         None => ("Unknown".into(), None, None),
     };
-    Ok(Some(CrsInfo { name, code, proj, wkt: g.wkt }))
+    Ok(Some(CrsInfo {
+        name,
+        code,
+        proj,
+        wkt: g.wkt,
+    }))
 }
 
 fn extract_wkt_name(wkt: &str) -> Option<String> {
@@ -547,7 +566,9 @@ fn extract_wkt_name(wkt: &str) -> Option<String> {
         if bytes[i] == b'"' {
             let start = i + 1;
             let mut j = start;
-            while j < bytes.len() && bytes[j] != b'"' { j += 1; }
+            while j < bytes.len() && bytes[j] != b'"' {
+                j += 1;
+            }
             if j < bytes.len() {
                 return Some(wkt[start..j].to_string());
             }
@@ -560,7 +581,10 @@ fn extract_wkt_name(wkt: &str) -> Option<String> {
 
 fn human_readable_epsg(code: &str) -> String {
     // code like "EPSG:4326"
-    let n: i32 = code.strip_prefix("EPSG:").and_then(|s| s.parse().ok()).unwrap_or(-1);
+    let n: i32 = code
+        .strip_prefix("EPSG:")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(-1);
     match n {
         4326 => "WGS 84".into(),
         3857 => "WGS 84 / Pseudo-Mercator".into(),
@@ -572,7 +596,10 @@ fn human_readable_epsg(code: &str) -> String {
 }
 
 fn proj_for_epsg(code: &str) -> Option<String> {
-    let n: i32 = code.strip_prefix("EPSG:").and_then(|s| s.parse().ok()).unwrap_or(-1);
+    let n: i32 = code
+        .strip_prefix("EPSG:")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(-1);
     match n {
         32601..=32660 => Some(format!("+proj=utm +zone={} +datum=WGS84 +units=m +no_defs +type=crs", n - 32600)),
         32701..=32760 => Some(format!("+proj=utm +zone={} +south +datum=WGS84 +units=m +no_defs +type=crs", n - 32700)),
@@ -604,8 +631,13 @@ fn save_debug_log(data: String, filename: Option<String>) -> Result<String, Stri
     dir.push("../data/debug");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    let name = if let Some(f) = filename { f } else {
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs();
+    let name = if let Some(f) = filename {
+        f
+    } else {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_secs();
         format!("ml-georeferencer-debug-{}.json", ts)
     };
     let path: PathBuf = dir.join(name);
@@ -695,7 +727,11 @@ fn pixel_to(mode: String, u: f64, v: f64, state: State<AppState>) -> Result<Opti
 }
 
 #[tauri::command]
-fn pixels_to(mode: String, pts: Vec<[f64; 2]>, state: State<AppState>) -> Result<Vec<Option<XY>>, String> {
+fn pixels_to(
+    mode: String,
+    pts: Vec<[f64; 2]>,
+    state: State<AppState>,
+) -> Result<Vec<Option<XY>>, String> {
     let geo = match state.ref_georef.lock().map_err(|e| e.to_string())?.clone() {
         Some(g) => g,
         None => return Ok(vec![None; pts.len()]),
@@ -732,9 +768,13 @@ fn pixels_to(mode: String, pts: Vec<[f64; 2]>, state: State<AppState>) -> Result
             }
         }
         "pixel" => {
-            for [u, v] in pts { out.push(Some(XY { x: u, y: v })); }
+            for [u, v] in pts {
+                out.push(Some(XY { x: u, y: v }));
+            }
         }
-        _ => { out.resize(pts.len(), None); }
+        _ => {
+            out.resize(pts.len(), None);
+        }
     }
     Ok(out)
 }
@@ -761,7 +801,9 @@ fn pixels_to_projected(
         Some(g) => g,
         None => return Ok(vec![None; pts.len()]),
     };
-    let Some(wkt) = &geo.wkt else { return Ok(vec![None; pts.len()]); };
+    let Some(wkt) = &geo.wkt else {
+        return Ok(vec![None; pts.len()]);
+    };
     let mut cache: HashMap<(i32, bool), ()> = HashMap::new();
     let mut out = Vec::with_capacity(pts.len());
     for [u, v] in pts {
@@ -770,7 +812,9 @@ fn pixels_to_projected(
         let zone = (((lon + 180.0) / 6.0).floor() as i32).clamp(1, 60);
         let north = lat >= 0.0;
         let key = (zone, north);
-        if !cache.contains_key(&key) { cache.insert(key, ()); }
+        if !cache.contains_key(&key) {
+            cache.insert(key, ());
+        }
         let (x, y) = convert_to_utm(&policy, zone, north, lon, lat)?;
         out.push(Some(XY { x, y }));
     }
