@@ -74,10 +74,20 @@ pub fn read_world_file_for_image(image_path: &str) -> Result<Option<[f64; 6]>> {
         cand.set_extension(&wext);
         if let Ok(s) = read_to_string(&cand) {
             let mut vals = [0.0f64; 6];
+            let mut ok = true;
             for (i, line) in s.lines().enumerate().take(6) {
-                vals[i] = line.trim().parse::<f64>()?;
+                match line.trim().parse::<f64>() {
+                    Ok(v) => vals[i] = v,
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
+                }
             }
-            return Ok(Some(vals));
+            if ok {
+                return Ok(Some(vals));
+            }
+            // If parse fails, try next candidate instead of erroring out
         }
     }
     Ok(None)

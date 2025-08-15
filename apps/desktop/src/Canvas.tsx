@@ -126,8 +126,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
       panRef.current = { x: 0, y: 0 };
       log('view_reset_on_image', {});
       draw();
-      // Clear any overlay/transient after a fresh image load
-      if (overlayDot) setOverlayDot(null);
+      // Clear transient after a fresh image load
       transientPtsRef.current = [];
     }
   }, [img?.src]);
@@ -190,7 +189,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
         hasOff = false;
         offscreenCapableRef.current = false;
         context = onscreen;
-        canvas.width = pixelW; canvas.height = pixelH;
+        canvas.width = w; canvas.height = h;
       } else {
         context = ctx;
       }
@@ -252,7 +251,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
     // Constant screen-size points with light de-clutter when extremely zoomed out
     const baseR = dotRadiusPx || 5; // CSS px
     const rCss = scale < 0.05 ? 2 : scale < 0.12 ? 3 : baseR;
-    const rDev = hasOff ? rCss * dpr : rCss;
+    const rDev = rCss;
     let drawnCells: Set<string> | null = null;
     if (scale < 0.08) drawnCells = new Set<string>();
     const cell = rCss * 2.2; // CSS px grid for declutter
@@ -297,7 +296,7 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
       const sx = sxCss;
       const sy = syCss;
       context.save();
-      context.lineWidth = hasOff ? 2 * dpr : 2;
+      context.lineWidth = 2;
       context.strokeStyle = outlinePreview.color || '#ffffff';
       context.beginPath();
       context.arc(sx, sy, rDev * 1.2, 0, Math.PI * 2);
@@ -412,7 +411,6 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
         const found = points.some(p => Math.abs(p.x - t.x) < 0.5 && Math.abs(p.y - t.y) < 0.5);
         if (found) {
           transientPtsRef.current = [];
-          if (overlayDot) setOverlayDot(null);
         }
       }
     }
