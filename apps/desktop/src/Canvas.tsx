@@ -400,6 +400,63 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
     }
   };
 
+  // Prevent page scroll on wheel and perform zoom with a native (non-passive) listener
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheelNative = (e: WheelEvent) => {
+      e.preventDefault();
+      if (!img) return;
+      const rect = el.getBoundingClientRect();
+      const cursorPt = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      wheelAnchorRef.current = cursorPt as any;
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      wheelAccumRef.current *= factor;
+      if (!wheelRaf.current) {
+        wheelRaf.current = requestAnimationFrame(() => {
+          const { width, height } = containerSize;
+          const oldZoom = zoomRef.current;
+          const accum = wheelAccumRef.current;
+          wheelAccumRef.current = 1;
+          wheelRaf.current = 0;
+          const newZoom = clamp(oldZoom * accum, 0.1, 20);
+          const oldScale = fitScale * oldZoom;
+          const newScale = fitScale * newZoom;
+          const anchor = wheelAnchorRef.current || { x: width / 2, y: height / 2 };
+          const drawW_old = img.width * oldScale;
+          const drawH_old = img.height * oldScale;
+          const offX_old = (width - drawW_old) / 2 + panRef.current.x;
+          const offY_old = (height - drawH_old) / 2 + panRef.current.y;
+          const imgX = (anchor.x - offX_old) / oldScale;
+          const imgY = (anchor.y - offY_old) / oldScale;
+          const drawW_new = img.width * newScale;
+          const drawH_new = img.height * newScale;
+          const offX_new_centered = (width - drawW_new) / 2;
+          const offY_new_centered = (height - drawH_new) / 2;
+          const newPanX = anchor.x - (offX_new_centered + imgX * newScale);
+          const newPanY = anchor.y - (offY_new_centered + imgY * newScale);
+          qualityRef.current = 'low';
+          interactingRef.current = true;
+          zoomRef.current = newZoom;
+          panRef.current = { x: newPanX, y: newPanY };
+          draw();
+          if (onViewChange) onViewChange({ zoom: zoomRef.current, pan: { ...panRef.current } });
+          if (onInteraction) onInteraction({ type: 'zoom', factor: accum, anchorCss: anchor });
+          requestAnimationFrame(() => {
+            qualityRef.current = 'high';
+            if (interactTimer.current) cancelAnimationFrame(interactTimer.current);
+            interactTimer.current = requestAnimationFrame(() => {
+              interactingRef.current = false;
+              draw();
+            });
+          });
+        });
+      }
+    };
+    el.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => el.removeEventListener('wheel', onWheelNative as EventListener);
+  }, [img, containerSize, fitScale, onViewChange, onInteraction]);
+
   // Redraw when inputs change; clear transient feedback once props likely reflect the state
   useEffect(() => {
     // Only clear transient/overlay after the point is reflected in props
@@ -659,7 +716,8 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
       style={{
         width: '100%',
         height: '100%',
-        overflow: 'hidden'
+        overflow: 'hidden',
+        overscrollBehavior: 'contain'
       }}
     >
       <div ref={fpsElRef as any} style={{ position: 'absolute', left: 6, top: 4, color: '#9cf', font: '11px system-ui', opacity: 0.8, pointerEvents: 'none' }}></div>
@@ -687,7 +745,6 @@ const Canvas: React.FC<Props> = ({ imageData, overlayTransform, onImageClick, on
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        onWheel={handleWheel}
         onClick={handleClick}
         {...canvasProps}
       />
