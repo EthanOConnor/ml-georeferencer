@@ -438,20 +438,18 @@ function App() {
               setRefPreviewOverride(null);
             }
           }}
-          onImageMouseMove={async (x, y) => {
-            rightLast.current = { x, y };
-            cancelAnimationFrame(rightMoveRAF.current);
-            rightMoveRAF.current = requestAnimationFrame(async () => {
-              const last = rightLast.current;
-              if (!last) return;
+          onImageMouseMove={(() => {
+            let lastTs = 0;
+            return async (x: number, y: number) => {
+              const now = performance.now();
+              if (now - lastTs < 50) return; // throttle to ~20 Hz
+              lastTs = now;
               try {
-                const coords = await invoke('pixel_to', { u: last.x, v: last.y, mode: coordFormat });
+                const coords = await invoke('pixel_to', { u: x, v: y, mode: coordFormat });
                 updateRefCursor(coords);
-              } catch (e) {
-                // ignore
-              }
-            });
-          }}
+              } catch {}
+            };
+          })()}
           canvasProps={{ onContextMenu: (e) => { e.preventDefault(); if (pendingSrc) setPendingSrc(null); } }}
           onImageClick={(x, y) => {
             if (pendingSrc) {
